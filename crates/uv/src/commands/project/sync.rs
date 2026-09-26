@@ -914,7 +914,7 @@ pub(crate) async fn do_sync<'a>(
     // Also verify artifacts in the full lockfile, including unselected extras and groups.
     let build_hasher = target
         .lock()
-        .hash_strategy(target.install_path())?
+        .build_hash_strategy(target.install_path())?
         .with_constraint_hashes(&build_hasher)?;
 
     // Resolve the flat indexes from `--find-links`.

@@ -838,20 +838,26 @@ async fn do_lock(
         .build();
     // Checking an existing lockfile may build metadata and install build dependencies. Verify any
     // artifacts recorded in that lockfile, including for an ordinary unlocked command.
-    let (locked_hasher, locked_build_hasher) = if let Some(existing_lock) = existing_lock.as_ref() {
-        let locked_hasher = existing_lock.hash_strategy(target.install_path())?;
-        let build_hasher = HashStrategy::from_constraints(
-            &existing_lock.build_constraints(target.install_path()),
-            Some(&interpreter.to_resolver_marker_environment()),
-            uv_configuration::HashCheckingMode::Verify,
-        )?;
-        let locked_build_hasher = locked_hasher
-            .clone()
-            .with_constraint_hashes(&build_hasher)?;
-        (locked_hasher, locked_build_hasher)
-    } else {
-        (HashStrategy::default(), HashStrategy::default())
-    };
+    let (locked_hasher, locked_build_hasher, build_lock_hasher) =
+        if let Some(existing_lock) = existing_lock.as_ref() {
+            let locked_hasher = existing_lock.hash_strategy(target.install_path())?;
+            let build_lock_hasher = existing_lock.build_hash_strategy(target.install_path())?;
+            let build_hasher = HashStrategy::from_constraints(
+                &existing_lock.build_constraints(target.install_path()),
+                Some(&interpreter.to_resolver_marker_environment()),
+                uv_configuration::HashCheckingMode::Verify,
+            )?;
+            let locked_build_hasher = build_lock_hasher
+                .clone()
+                .with_constraint_hashes(&build_hasher)?;
+            (locked_hasher, locked_build_hasher, build_lock_hasher)
+        } else {
+            (
+                HashStrategy::default(),
+                HashStrategy::default(),
+                HashStrategy::default(),
+            )
+        };
     // A fresh resolution retains those hashes under `--locked`, but an explicitly unlocked update
     // must be able to replace them. Build dependencies follow the same choice without generating
     // hashes for artifacts absent from the lockfile.
@@ -869,7 +875,7 @@ async fn do_lock(
     )?;
     // Explicit build constraints apply even when fresh resolution can replace lockfile hashes.
     let resolution_build_hasher = match mode {
-        LockMode::Locked(..) => locked_hasher.with_constraint_hashes(&build_hasher)?,
+        LockMode::Locked(..) => build_lock_hasher.with_constraint_hashes(&build_hasher)?,
         LockMode::Write(_) | LockMode::DryRun(_) | LockMode::Frozen(_) => build_hasher,
     };
 

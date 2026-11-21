@@ -1712,8 +1712,16 @@ impl RunCommand {
             Self::PythonGuiScript(target, args) => {
                 let python_executable = interpreter.sys_executable();
 
-                let pythonw_executable =
-                    uv_trampoline_builder::windowed_python_executable(python_executable);
+                // Use `pythonw.exe` if it exists, otherwise fall back to `python.exe`.
+                // See `install-wheel-rs::get_script_executable`.gd
+                let pythonw_executable = python_executable
+                    .file_name()
+                    .map(|name| {
+                        let new_name = name.to_string_lossy().replace("python", "pythonw");
+                        python_executable.with_file_name(new_name)
+                    })
+                    .filter(|path| path.is_file())
+                    .unwrap_or_else(|| python_executable.to_path_buf());
 
                 let mut process = Command::new(&pythonw_executable);
                 process.arg(target);
@@ -1741,8 +1749,16 @@ impl RunCommand {
             Self::PythonGuiStdin(script, args) => {
                 let python_executable = interpreter.sys_executable();
 
-                let pythonw_executable =
-                    uv_trampoline_builder::windowed_python_executable(python_executable);
+                // Use `pythonw.exe` if it exists, otherwise fall back to `python.exe`.
+                // See `install-wheel-rs::get_script_executable`.gd
+                let pythonw_executable = python_executable
+                    .file_name()
+                    .map(|name| {
+                        let new_name = name.to_string_lossy().replace("python", "pythonw");
+                        python_executable.with_file_name(new_name)
+                    })
+                    .filter(|path| path.is_file())
+                    .unwrap_or_else(|| python_executable.to_path_buf());
 
                 let mut process = Command::new(&pythonw_executable);
                 process.arg("-c");
@@ -2045,7 +2061,7 @@ fn copy_entrypoint(
 fn copy_entrypoint(
     source: &Path,
     target: &Path,
-    previous_executable: &Path,
+    _previous_executable: &Path,
     python_executable: &Path,
 ) -> Result<(), CopyEntrypointError> {
     use uv_trampoline_builder::Launcher;
@@ -2062,7 +2078,11 @@ fn copy_entrypoint(
         Err(err) => return Err(CopyEntrypointError::Trampoline(err)),
     };
 
-    let launcher = launcher.relocate(previous_executable, python_executable)?;
+    let launcher = if launcher.python_path().ends_with("pythonw.exe") {
+        launcher.with_python_path(python_executable.with_file_name("pythonw.exe"))?
+    } else {
+        launcher.with_python_path(python_executable)?
+    };
     let mut file = fs_err::OpenOptions::new()
         .create_new(true)
         .write(true)

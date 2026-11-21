@@ -961,20 +961,6 @@ fn nul_in_target_is_rejected() -> Result<()> {
 }
 
 #[test]
-fn windowed_name_does_not_substitute_an_unpaired_surrogate() -> Result<()> {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-
-    let dir = assert_fs::TempDir::new()?;
-    let mut name = OsString::from_wide(&[0xd800]);
-    name.push("python.exe");
-    let python = dir.path().join(name);
-    File::create(dir.path().join("\u{fffd}pythonw.exe"))?;
-    assert_eq!(super::windowed_python_executable(&python), python);
-    Ok(())
-}
-
-#[test]
 fn unpaired_surrogate_in_target_is_rejected() {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
@@ -1169,8 +1155,6 @@ fn rewriting_preserves_the_window_mode() -> Result<()> {
     let dir = assert_fs::TempDir::new()?;
     let source = dir.child("source.exe");
     let destination = dir.child("destination.exe");
-    let python = dir.child("python.exe");
-    File::create(dir.child("pythonw.exe").path())?;
     for (is_gui, name, expected) in [
         (true, "python.exe", IMAGE_SUBSYSTEM_WINDOWS_GUI),
         (false, "pythonw.exe", IMAGE_SUBSYSTEM_WINDOWS_CUI),
@@ -1182,42 +1166,11 @@ fn rewriting_preserves_the_window_mode() -> Result<()> {
         assert_eq!(subsystem(source.path())?, expected);
         let launcher =
             Launcher::try_from_path(source.path())?.context("Missing script launcher")?;
-        let launcher = launcher.relocate(Path::new("python.exe"), python.path())?;
-        assert_eq!(launcher.python_path(), dir.path().join(name));
-        launcher.write_to_file(&mut File::create(destination.path())?)?;
+        launcher
+            .with_python_path(dir.path().join(name))?
+            .write_to_file(&mut File::create(destination.path())?)?;
         assert_eq!(subsystem(destination.path())?, expected);
     }
-    Ok(())
-}
-
-#[test]
-fn relocate_windowed_interpreter_aliases() -> Result<()> {
-    let dir = assert_fs::TempDir::new()?;
-    let python = dir.child("python.exe");
-    let pythonw = dir.child("pythonw.exe");
-    let relocate = |name: &str| {
-        Launcher {
-            kind: LauncherKind::Python,
-            window_mode: WindowMode::Console,
-            python_path: name.to_owned(),
-            script_data: None,
-        }
-        .relocate(Path::new(".Python.exe"), python.path())
-    };
-    assert_eq!(relocate(".pythonw.exe")?.python_path(), python.path());
-    File::create(pythonw.path())?;
-    assert_eq!(relocate(".pythonw.exe")?.python_path(), pythonw.path());
-    assert_eq!(relocate("pythonw.exe")?.python_path(), pythonw.path());
-    assert_eq!(relocate("PythonW3.13t.exe")?.python_path(), pythonw.path());
-    assert_eq!(relocate("pypyw.exe")?.python_path(), pythonw.path());
-    assert_eq!(relocate("PyPy3.11W.exe")?.python_path(), pythonw.path());
-    assert_eq!(relocate("pypy3.11.exe")?.python_path(), python.path());
-    assert_eq!(relocate("python3.13t.exe")?.python_path(), python.path());
-    assert_eq!(relocate(".python.exe")?.python_path(), python.path());
-    assert_eq!(
-        super::windowed_python_name(Path::new("π-Python.EXE")).as_deref(),
-        Some("π-Pythonw.EXE")
-    );
     Ok(())
 }
 

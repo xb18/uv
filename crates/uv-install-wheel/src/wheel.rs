@@ -181,7 +181,14 @@ fn quote_executable_for_encoded_script(executable: &Path) -> String {
 fn get_script_executable(python_executable: &Path, is_gui: bool) -> PathBuf {
     // Only check for `pythonw.exe` on Windows.
     if cfg!(windows) && is_gui {
-        uv_trampoline_builder::windowed_python_executable(python_executable)
+        python_executable
+            .file_name()
+            .map(|name| {
+                let new_name = name.to_string_lossy().replace("python", "pythonw");
+                python_executable.with_file_name(new_name)
+            })
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| python_executable.to_path_buf())
     } else {
         python_executable.to_path_buf()
     }

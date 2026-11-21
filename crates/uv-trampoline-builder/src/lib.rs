@@ -17,47 +17,6 @@ mod resource_reader;
 #[cfg(all(test, windows))]
 mod resource_tests;
 
-fn windowed_python_name(python: &Path) -> Option<String> {
-    let name = python.file_name()?.to_str()?;
-    #[cfg(windows)]
-    let search = name.to_ascii_lowercase();
-    #[cfg(not(windows))]
-    let search = name;
-    let mut windowed = String::new();
-    let mut start = 0;
-    for (index, matched) in search.match_indices("python") {
-        // ASCII case folding leaves offsets in the original name intact.
-        let end = index + matched.len();
-        windowed.push_str(&name[start..end]);
-        windowed.push('w');
-        start = end;
-    }
-    if start == 0 {
-        return None;
-    }
-    windowed.push_str(&name[start..]);
-    Some(windowed)
-}
-
-/// Whether a lowercase executable stem names one of the windowed interpreter
-/// aliases that `uv-virtualenv` installs.
-#[cfg(windows)]
-fn is_windowed_python_stem(stem: &str) -> bool {
-    matches!(stem, "pythonw" | "pypyw")
-        || stem
-            .strip_circumfix("pythonw3.", 't')
-            .or_else(|| stem.strip_circumfix("pypy3.", 'w'))
-            .is_some_and(|minor| minor.parse::<u8>().is_ok_and(|n| n.to_string() == minor))
-}
-
-/// Select the adjacent windowed interpreter for a GUI script when available.
-pub fn windowed_python_executable(python: &Path) -> PathBuf {
-    windowed_python_name(python)
-        .map(|name| python.with_file_name(name))
-        .filter(|path| path.is_file())
-        .unwrap_or_else(|| python.to_path_buf())
-}
-
 #[cfg(all(windows, target_arch = "x86"))]
 const LAUNCHER_I686_GUI: &[u8] = include_bytes!("../trampolines/uv-trampoline-i686-gui.exe");
 
@@ -163,29 +122,8 @@ impl Launcher {
         Path::new(&self.python_path)
     }
 
-    /// Point the launcher at a replacement interpreter, selecting its windowed
-    /// counterpart for a windowed venv alias or the windowed form of the previous name.
-    pub fn relocate(self, previous: &Path, replacement: &Path) -> Result<Self, Error> {
-        let is_windowed = self
-            .python_path()
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                name.to_ascii_lowercase()
-                    .strip_suffix(".exe")
-                    .is_some_and(is_windowed_python_stem)
-                    || windowed_python_name(previous)
-                        .is_some_and(|windowed| name.eq_ignore_ascii_case(&windowed))
-            });
-        if is_windowed {
-            self.with_python_path(windowed_python_executable(replacement))
-        } else {
-            self.with_python_path(replacement)
-        }
-    }
-
     /// Encode a replacement path in the launcher's UTF-8 resource.
-    fn with_python_path(self, path: impl AsRef<Path>) -> Result<Self, Error> {
+    pub fn with_python_path(self, path: impl AsRef<Path>) -> Result<Self, Error> {
         Ok(Self {
             python_path: encode_python_path(&path)?.to_owned(),
             ..self

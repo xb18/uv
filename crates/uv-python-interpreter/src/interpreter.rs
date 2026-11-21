@@ -1889,6 +1889,11 @@ impl InterpreterInfo {
             return Ok(info);
         }
 
+        let inputs = resolved.file_timestamps(&BTreeSet::new());
+        let Some(mut file_timestamps) = target.cache_input(executable, inputs)? else {
+            return uncached(probe(scratch()?.path())?);
+        };
+
         let dir = scratch()?;
         // A launcher junction can have the cache root as its parent. Snapshot
         // that route with the probe directory in place and keep the directory
@@ -1904,11 +1909,6 @@ impl InterpreterInfo {
             (current, entry)
         } else {
             (resolved, cache_entry)
-        };
-
-        let inputs = resolved.file_timestamps(&BTreeSet::new());
-        let Some(mut file_timestamps) = target.cache_input(executable, inputs)? else {
-            return uncached(probe(dir.path())?);
         };
 
         #[cfg(windows)]

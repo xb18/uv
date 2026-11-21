@@ -31,6 +31,18 @@ fn wow64_executable(windows: &Path) -> io::Result<Option<std::path::PathBuf>> {
 }
 
 #[test]
+fn missing_interpreter_is_reported_before_preparing_probe() -> Result<()> {
+    let dir = tempdir()?;
+    let executable = dir.path().join(r"gone\Scripts\python.exe");
+    // A file at the cache root prevents creation of a probe directory.
+    let root = dir.path().join("cache");
+    fs::write(&root, [])?;
+    let err = Interpreter::query(&executable, &Cache::from_path(root)).unwrap_err();
+    assert!(matches!(err, Error::NotFound(path) if path == executable));
+    Ok(())
+}
+
+#[test]
 fn link_snapshot_requires_reaching_the_canonical_path() -> Result<()> {
     let dir = tempdir()?;
     let base = dir.path().join("python.exe");

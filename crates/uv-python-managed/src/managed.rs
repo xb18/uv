@@ -13,7 +13,7 @@ use indexmap::IndexMap;
 use itertools::Itertools;
 use thiserror::Error;
 use tokio::task::{JoinError, spawn_blocking};
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
 
@@ -336,7 +336,13 @@ pub enum BinLinkOperation {
 
 impl BinLinkOperation {
     fn resolve_proxy_target(self, path: &Path) -> Option<PathBuf> {
-        let Ok(Some((LauncherKind::Python, target))) = read_launcher_target(path) else {
+        let launcher = read_launcher_target(path).inspect_err(|err| {
+            trace!(
+                "Could not determine ownership of `{}`: {err}",
+                path.display()
+            );
+        });
+        let Ok(Some((LauncherKind::Python, target))) = launcher else {
             return None;
         };
         match dunce::canonicalize(&target) {

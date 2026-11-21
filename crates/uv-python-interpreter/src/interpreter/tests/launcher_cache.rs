@@ -323,6 +323,49 @@ async fn retargeted_launcher_does_not_reuse_a_removed_alias() -> Result<()> {
 }
 
 #[tokio::test]
+async fn junction_selects_venvs_with_a_shared_proxy() -> Result<()> {
+    let cache = Cache::temp()?.init().await?;
+    let dir = tempdir()?;
+    let active = dir.path().join("active");
+    let proxy = active.join(r"Scripts\python.exe");
+    let base = dir.path().join("python.exe");
+    fs::write(&base, [])?;
+    let scripts = dir.path().join("scripts");
+    fs::create_dir(&scripts)?;
+    fs::write(
+        scripts.join("python.exe"),
+        windows_python_launcher(r"..\..\python.exe", WindowMode::Console)?,
+    )?;
+    // Both venvs reach the same launcher and interpreter, but each has
+    // its own configuration despite identical modification times.
+    for include_site in [false, true] {
+        let venv = dir.path().join(include_site.to_string());
+        fs::create_dir(&venv)?;
+        uv_fs::create_symlink(&scripts, venv.join("Scripts"))?;
+        let config = venv.join("pyvenv.cfg");
+        fs::write(
+            &config,
+            format!("include-system-site-packages = {include_site}\n"),
+        )?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&config)?
+            .set_modified(UNIX_EPOCH)?;
+        uv_fs::replace_symlink(&venv, &active)?;
+        let mut response = mocked_interpreter_response(&proxy)?;
+        response.metadata.sys_base_executable = Some(base.clone());
+        if !include_site {
+            response.metadata.sys_path.clear();
+        }
+        let expected = response.metadata.sys_path.clone();
+        InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
+        let info = InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
+        assert_eq!(info.metadata.sys_path, expected);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
     let dir = tempdir()?;
     let executable = dir.path().join("python.exe");
@@ -617,6 +660,7 @@ fn proxy_only_entry(proxy: &Path, cache: &Cache) -> uv_cache::CacheEntry {
             launcher: None,
         },
         canonical: proxy.to_path_buf(),
+        launcher: None,
     }
     .cache_entry(cache)
 }

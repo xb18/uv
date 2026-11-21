@@ -1021,9 +1021,28 @@ impl<'a> ExecutableTarget<'a> {
         let Some(canonical) = self.cache_input(executable, self.canonicalize())? else {
             return Ok(None);
         };
+        #[cfg(windows)]
+        let launcher = if let Some((_, interpreter)) = &self.launcher {
+            let Some(path) = self.cache_input(executable, dunce::canonicalize(self.absolute))?
+            else {
+                return Ok(None);
+            };
+            let Some(source) = LinkSnapshot::capture(self.absolute, &path) else {
+                trace!(
+                    "Skipping interpreter cache for unresolved launcher path `{}`",
+                    self.absolute.display()
+                );
+                return Ok(None);
+            };
+            Some((interpreter.as_path(), source))
+        } else {
+            None
+        };
         Ok(Some(CacheTarget {
             target: self,
             canonical,
+            #[cfg(windows)]
+            launcher,
         }))
     }
 }
@@ -1032,6 +1051,9 @@ impl<'a> ExecutableTarget<'a> {
 struct CacheTarget<'a> {
     target: &'a ExecutableTarget<'a>,
     canonical: PathBuf,
+    /// The stored interpreter and the links leading to the launcher itself.
+    #[cfg(windows)]
+    launcher: Option<(&'a Path, LinkSnapshot)>,
 }
 
 impl CacheTarget<'_> {
@@ -1055,14 +1077,16 @@ impl CacheTarget<'_> {
             &python_executable,
             &pyvenv_launcher,
         );
-        // Python can report the launcher's junction path as its base executable.
-        // Retargeting via another junction can change that path while leaving
-        // the canonical interpreter and the launcher's timestamp unchanged.
-        let digest = if let Some((_, target)) = &self.target.launcher {
-            cache_digest(&("verified-launcher", key, target))
+        // A junction on the way to the launcher can select a different venv.
+        // A junction in its stored target can change the base path Python reports.
+        #[cfg(windows)]
+        let digest = if let Some((interpreter, source)) = &self.launcher {
+            cache_digest(&("verified-launcher", key, interpreter, &source.redirects))
         } else {
             cache_digest(&key)
         };
+        #[cfg(not(windows))]
+        let digest = cache_digest(&key);
 
         cache.entry(
             CacheBucket::Interpreter,
@@ -1083,7 +1107,7 @@ impl CacheTarget<'_> {
 
     #[cfg(windows)]
     fn snapshot_links(&self) -> Option<LinkSnapshot> {
-        let (_, path) = self.target.launcher.as_ref()?;
+        let (path, _) = self.launcher.as_ref()?;
         LinkSnapshot::capture(path, &self.canonical)
     }
 
@@ -1103,7 +1127,7 @@ impl CacheTarget<'_> {
         let Ok(Some(current)) = target.for_cache(self.target.absolute) else {
             return false;
         };
-        if current.target.launcher != self.target.launcher || current.canonical != self.canonical {
+        if current.launcher != self.launcher || current.canonical != self.canonical {
             return false;
         }
         let Ok(base) = std::path::absolute(dunce::simplified(base)) else {
@@ -1134,7 +1158,7 @@ impl CacheTarget<'_> {
         }
 
         #[cfg(windows)]
-        if self.target.launcher.is_some()
+        if self.launcher.is_some()
             && !self.launcher_matches_probe(wire.metadata.sys_base_executable.as_deref(), links)
         {
             return false;
@@ -1197,11 +1221,12 @@ impl CacheTarget<'_> {
     }
 }
 
-/// The launcher's target and the timestamps of the links used to resolve it.
+/// The paths reached when resolving links and the timestamps of their ancestors.
 #[cfg(windows)]
 #[derive(PartialEq, Eq)]
 struct LinkSnapshot {
     target: PathBuf,
+    redirects: Vec<PathBuf>,
     ancestor_timestamps: Vec<(u64, u64)>,
 }
 
@@ -1215,10 +1240,10 @@ impl LinkSnapshot {
 
         let mut snapshot = Self {
             target: std::path::absolute(dunce::simplified(stored)).ok()?,
+            redirects: Vec::new(),
             ancestor_timestamps: Vec::new(),
         };
         let mut target = snapshot.target.as_path();
-        let mut resolved;
         for _ in 0..=40 {
             if target == canonical {
                 return Some(snapshot);
@@ -1241,10 +1266,14 @@ impl LinkSnapshot {
             let Some(link) = redirect else {
                 // A substituted drive can change its mapping without updating
                 // any of these timestamps. Only allow a spelling difference.
-                return target
+                if !target
                     .as_os_str()
                     .eq_ignore_ascii_case(canonical.as_os_str())
-                    .then_some(snapshot);
+                {
+                    return None;
+                }
+                snapshot.redirects.push(canonical.to_path_buf());
+                return Some(snapshot);
             };
             let destination = fs::read_link(link).ok()?;
             let mut next = link.with_file_name(dunce::simplified(&destination));
@@ -1252,8 +1281,8 @@ impl LinkSnapshot {
             if !suffix.as_os_str().is_empty() {
                 next.push(suffix);
             }
-            resolved = std::path::absolute(next).ok()?;
-            target = &resolved;
+            snapshot.redirects.push(std::path::absolute(next).ok()?);
+            target = snapshot.redirects.last()?;
         }
         None
     }

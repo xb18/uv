@@ -432,19 +432,19 @@ fn relocated_resource_directory() -> Result<()> {
 fn resource_section_with_zero_virtual_size() -> Result<()> {
     let temp_dir = assert_fs::TempDir::new()?;
     let path = temp_dir.child("launcher.exe");
-    let python = which::which("python")?;
-    let mut launcher = windows_python_launcher(&python, WindowMode::Console)?;
+    let cmd = which::which("cmd.exe")?;
+    let mut launcher = windows_python_launcher(&cmd, WindowMode::Console)?;
     let image = PE::parse(&launcher)?;
     let (_, virtual_size) = resource_section(&image)?;
     launcher[virtual_size..virtual_size + 4].fill(0);
     fs_err::write(path.path(), launcher)?;
 
     Command::new(path.path())
-        .args(["-c", "pass"])
+        .args(["/d", "/c", "exit", "0"])
         .assert()
         .success();
     let result = Launcher::try_from_path(path.path())?.context("Missing Python launcher")?;
-    assert_eq!(result.python_path(), python);
+    assert_eq!(result.python_path(), cmd);
     Ok(())
 }
 
@@ -612,22 +612,22 @@ fn localized_launcher_target_must_be_unambiguous() -> Result<()> {
         Err(super::Error::UnprocessableMetadata)
     ));
 
-    let python = which::which("python")?;
+    let cmd = which::which("cmd.exe")?;
     update_native_resources(
         path.path(),
         0,
         &[(
             RESOURCE_PYTHON_PATH,
-            python.to_str().context("Invalid path")?.as_bytes(),
+            cmd.to_str().context("Invalid path")?.as_bytes(),
         )],
     )?;
     Command::new(path.path())
-        .args(["-c", "pass"])
+        .args(["/d", "/c", "exit", "0"])
         .assert()
         .success();
     assert_eq!(
         super::read_launcher_target(path.path())?,
-        Some((LauncherKind::Python, python))
+        Some((LauncherKind::Python, cmd))
     );
 
     // A binary search can find the second neutral entry when IDs are duplicated.

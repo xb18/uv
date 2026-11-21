@@ -1207,6 +1207,9 @@ fn relocate_windowed_interpreter_aliases() -> Result<()> {
     assert_eq!(relocate(".pythonw.exe")?.python_path(), pythonw.path());
     assert_eq!(relocate("pythonw.exe")?.python_path(), pythonw.path());
     assert_eq!(relocate("PythonW3.13t.exe")?.python_path(), pythonw.path());
+    assert_eq!(relocate("pypyw.exe")?.python_path(), pythonw.path());
+    assert_eq!(relocate("PyPy3.11W.exe")?.python_path(), pythonw.path());
+    assert_eq!(relocate("pypy3.11.exe")?.python_path(), python.path());
     assert_eq!(relocate("python3.13t.exe")?.python_path(), python.path());
     assert_eq!(relocate(".python.exe")?.python_path(), python.path());
     Ok(())

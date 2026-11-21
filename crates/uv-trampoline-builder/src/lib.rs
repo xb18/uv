@@ -23,13 +23,15 @@ fn windowed_python_name(python: &Path) -> Option<String> {
         .then(|| name.replace("python", "pythonw"))
 }
 
-/// Whether a lowercase executable stem names a windowed CPython interpreter
-/// provided by a Windows virtual environment.
-pub fn is_windowed_python_stem(stem: &str) -> bool {
-    stem == "pythonw"
+/// Whether a lowercase executable stem names one of the windowed interpreter
+/// aliases that `uv-virtualenv` installs.
+#[cfg(windows)]
+fn is_windowed_python_stem(stem: &str) -> bool {
+    matches!(stem, "pythonw" | "pypyw")
         || stem
             .strip_circumfix("pythonw3.", 't')
-            .is_some_and(|minor| minor.parse::<u8>().is_ok())
+            .or_else(|| stem.strip_circumfix("pypy3.", 'w'))
+            .is_some_and(|minor| minor.parse::<u8>().is_ok_and(|n| n.to_string() == minor))
 }
 
 /// Select the adjacent windowed interpreter for a GUI script when available.

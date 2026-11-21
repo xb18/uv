@@ -149,7 +149,7 @@ mod tests {
     fn outer_system32_redirects_before_an_inner_exemption() -> io::Result<()> {
         let windows = tempfile::tempdir()?;
         let system = windows.path().join("System32");
-        std::fs::create_dir(&system)?;
+        fs_err::create_dir(&system)?;
         let junction = system.join("alias");
         crate::create_symlink(windows.path(), &junction)?;
         for suffix in [

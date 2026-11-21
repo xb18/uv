@@ -1195,12 +1195,14 @@ fn relocate_windowed_interpreter_aliases() -> Result<()> {
     let dir = assert_fs::TempDir::new()?;
     let python = dir.child("python.exe");
     let pythonw = dir.child("pythonw.exe");
-    let script = dir.child("entrypoint.exe");
-    let relocate = |name: &str| -> Result<Launcher> {
-        fs_err::write(script.path(), windows_script_launcher("pass", true, name)?)?;
-        let launcher =
-            Launcher::try_from_path(script.path())?.context("Missing script launcher")?;
-        Ok(launcher.relocate(Path::new(".python.exe"), python.path())?)
+    let relocate = |name: &str| {
+        Launcher {
+            kind: LauncherKind::Python,
+            window_mode: WindowMode::Console,
+            python_path: name.to_owned(),
+            script_data: None,
+        }
+        .relocate(Path::new(".python.exe"), python.path())
     };
     assert_eq!(relocate(".pythonw.exe")?.python_path(), python.path());
     File::create(pythonw.path())?;

@@ -656,10 +656,7 @@ async fn unresolved_launcher_bypasses_cache() -> Result<()> {
 
 fn proxy_only_entry(proxy: &Path, cache: &Cache) -> uv_cache::CacheEntry {
     CacheTarget {
-        target: &ExecutableTarget {
-            absolute: proxy,
-            launcher: None,
-        },
+        absolute: proxy,
         canonical: proxy.to_path_buf(),
         launcher: None,
     }

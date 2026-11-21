@@ -1039,7 +1039,7 @@ impl<'a> ExecutableTarget<'a> {
             None
         };
         Ok(Some(CacheTarget {
-            target: self,
+            absolute: self.absolute,
             canonical,
             #[cfg(windows)]
             launcher,
@@ -1049,7 +1049,7 @@ impl<'a> ExecutableTarget<'a> {
 
 /// The executable and its resolved path when querying the interpreter cache.
 struct CacheTarget<'a> {
-    target: &'a ExecutableTarget<'a>,
+    absolute: &'a Path,
     canonical: PathBuf,
     /// The stored interpreter and the links leading to the launcher itself.
     #[cfg(windows)]
@@ -1072,7 +1072,7 @@ impl CacheTarget<'_> {
         let python_executable = env::var_os(EnvVars::PYTHONEXECUTABLE).map(PathBuf::from);
         let pyvenv_launcher = env::var_os(EnvVars::PYVENV_LAUNCHER).map(PathBuf::from);
         let key = (
-            self.target.absolute,
+            self.absolute,
             self.canonical.as_path(),
             &python_executable,
             &pyvenv_launcher,
@@ -1121,10 +1121,10 @@ impl CacheTarget<'_> {
             return false;
         }
         // A managed junction can redirect the launcher during the probe.
-        let Ok(target) = ExecutableTarget::identify(self.target.absolute) else {
+        let Ok(target) = ExecutableTarget::identify(self.absolute) else {
             return false;
         };
-        let Ok(Some(current)) = target.for_cache(self.target.absolute) else {
+        let Ok(Some(current)) = target.for_cache(self.absolute) else {
             return false;
         };
         if current.launcher != self.launcher || current.canonical != self.canonical {
@@ -1204,7 +1204,7 @@ impl CacheTarget<'_> {
         file_inputs: &BTreeSet<PathBuf>,
     ) -> Result<HashMap<PathBuf, Option<Timestamp>>, io::Error> {
         let mut file_timestamps = HashMap::new();
-        record_file_timestamps(self.target.absolute, &mut file_timestamps)?;
+        record_file_timestamps(self.absolute, &mut file_timestamps)?;
         if !file_timestamps.contains_key(&self.canonical) {
             // On Windows the canonical path can come from a trampoline executable.
             record_file_timestamps(&self.canonical, &mut file_timestamps)?;
@@ -1216,7 +1216,7 @@ impl CacheTarget<'_> {
         // key tracks the Darwin kernel release, which can stay the same when the plist changes.
         #[cfg(target_os = "macos")]
         record_file_timestamps(Path::new(SYSTEM_VERSION_PLIST), &mut file_timestamps)?;
-        record_pyvenv_cfg_timestamps(self.target.absolute, &mut file_timestamps)?;
+        record_pyvenv_cfg_timestamps(self.absolute, &mut file_timestamps)?;
         Ok(file_timestamps)
     }
 }
@@ -1874,7 +1874,7 @@ impl InterpreterInfo {
         }
 
         let inputs = resolved.file_timestamps(&BTreeSet::new());
-        let Some(mut file_timestamps) = resolved.target.cache_input(executable, inputs)? else {
+        let Some(mut file_timestamps) = target.cache_input(executable, inputs)? else {
             return uncached(probe()?);
         };
 

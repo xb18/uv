@@ -23,6 +23,15 @@ fn windowed_python_name(python: &Path) -> Option<String> {
         .then(|| name.replace("python", "pythonw"))
 }
 
+/// Whether a lowercase executable stem names a windowed CPython interpreter
+/// provided by a Windows virtual environment.
+pub fn is_windowed_python_stem(stem: &str) -> bool {
+    stem == "pythonw"
+        || stem
+            .strip_circumfix("pythonw3.", 't')
+            .is_some_and(|minor| minor.parse::<u8>().is_ok())
+}
+
 /// Select the adjacent windowed interpreter for a GUI script when available.
 pub fn windowed_python_executable(python: &Path) -> PathBuf {
     windowed_python_name(python)
@@ -137,14 +146,16 @@ impl Launcher {
     }
 
     /// Point the launcher at a replacement interpreter, selecting its windowed
-    /// counterpart when the stored target is the windowed form of the previous one.
+    /// counterpart for a windowed venv alias or the windowed form of the previous name.
     pub fn relocate(self, previous: &Path, replacement: &Path) -> Result<Self, Error> {
         let is_windowed = self
             .python_path()
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| {
-                name.eq_ignore_ascii_case("pythonw.exe")
+                name.to_ascii_lowercase()
+                    .strip_suffix(".exe")
+                    .is_some_and(is_windowed_python_stem)
                     || windowed_python_name(previous)
                         .is_some_and(|windowed| name.eq_ignore_ascii_case(&windowed))
             });

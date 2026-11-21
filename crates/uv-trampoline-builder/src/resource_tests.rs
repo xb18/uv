@@ -1191,7 +1191,7 @@ fn rewriting_preserves_the_window_mode() -> Result<()> {
 }
 
 #[test]
-fn relocate_overridden_windowed_interpreter() -> Result<()> {
+fn relocate_windowed_interpreter_aliases() -> Result<()> {
     let dir = assert_fs::TempDir::new()?;
     let python = dir.child("python.exe");
     let pythonw = dir.child("pythonw.exe");
@@ -1206,6 +1206,8 @@ fn relocate_overridden_windowed_interpreter() -> Result<()> {
     File::create(pythonw.path())?;
     assert_eq!(relocate(".pythonw.exe")?.python_path(), pythonw.path());
     assert_eq!(relocate("pythonw.exe")?.python_path(), pythonw.path());
+    assert_eq!(relocate("PythonW3.13t.exe")?.python_path(), pythonw.path());
+    assert_eq!(relocate("python3.13t.exe")?.python_path(), python.path());
     assert_eq!(relocate(".python.exe")?.python_path(), python.path());
     Ok(())
 }

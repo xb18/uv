@@ -187,11 +187,9 @@ fn get_script_executable(python_executable: &Path, is_gui: bool) -> PathBuf {
     }
 }
 
-const RESERVED_SCRIPT_NAMES_ERROR: &[&str; 7] = &[
-    "python", "pythonw", "python3", "graalpy", "pypy", "pypy2", "pypy3",
-];
+const RESERVED_SCRIPT_NAMES_ERROR: &[&str; 6] =
+    &["python", "python3", "graalpy", "pypy", "pypy2", "pypy3"];
 const RESERVED_VERSIONED_SCRIPT_NAME_PREFIX_ERROR: &str = "python3.";
-const RESERVED_FREE_THREADED_SCRIPT_NAME_PREFIXES_ERROR: &[&str; 2] = &["python3.", "pythonw3."];
 const RESERVED_SCRIPT_NAMES_WARN: &[&str; 2] = &["activate", "activate_this.py"];
 
 /// Return the reserved interpreter name if a script would overwrite a Python executable.
@@ -200,15 +198,15 @@ const RESERVED_SCRIPT_NAMES_WARN: &[&str; 2] = &["activate", "activate_this.py"]
 pub fn reserved_script_name(name: &str) -> Option<&str> {
     let normalized_name = name.strip_suffix(".py").unwrap_or(name);
     (RESERVED_SCRIPT_NAMES_ERROR.contains(&normalized_name)
+        || uv_trampoline_builder::is_windowed_python_stem(normalized_name)
         || normalized_name
             .strip_prefix(RESERVED_VERSIONED_SCRIPT_NAME_PREFIX_ERROR)
-            .is_some_and(|minor| minor.parse::<u8>().is_ok())
-        || RESERVED_FREE_THREADED_SCRIPT_NAME_PREFIXES_ERROR
-            .iter()
-            .any(|prefix| {
-                normalized_name
-                    .strip_circumfix(*prefix, 't')
-                    .is_some_and(|minor| minor.parse::<u8>().is_ok())
+            .is_some_and(|minor| {
+                minor
+                    .strip_suffix('t')
+                    .unwrap_or(minor)
+                    .parse::<u8>()
+                    .is_ok()
             }))
     .then_some(normalized_name)
 }

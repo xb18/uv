@@ -2062,12 +2062,7 @@ fn copy_entrypoint(
         Err(err) => return Err(CopyEntrypointError::Trampoline(err)),
     };
 
-    let python = uv_trampoline_builder::relocated_python_executable(
-        launcher.python_path(),
-        previous_executable,
-        python_executable,
-    );
-    let launcher = launcher.with_python_path(python)?;
+    let launcher = launcher.relocate(previous_executable, python_executable)?;
     let mut file = fs_err::OpenOptions::new()
         .create_new(true)
         .write(true)

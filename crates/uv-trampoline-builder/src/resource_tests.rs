@@ -1179,14 +1179,18 @@ fn relocate_overridden_windowed_interpreter() -> Result<()> {
     let dir = assert_fs::TempDir::new()?;
     let python = dir.child("python.exe");
     let pythonw = dir.child("pythonw.exe");
-    let relocate = |name: &str| {
-        super::relocated_python_executable(Path::new(name), Path::new(".python.exe"), python.path())
+    let script = dir.child("entrypoint.exe");
+    let relocate = |name: &str| -> Result<Launcher> {
+        fs_err::write(script.path(), windows_script_launcher("pass", true, name)?)?;
+        let launcher =
+            Launcher::try_from_path(script.path())?.context("Missing script launcher")?;
+        Ok(launcher.relocate(Path::new(".python.exe"), python.path())?)
     };
-    assert_eq!(relocate(".pythonw.exe"), python.path());
+    assert_eq!(relocate(".pythonw.exe")?.python_path(), python.path());
     File::create(pythonw.path())?;
-    assert_eq!(relocate(".pythonw.exe"), pythonw.path());
-    assert_eq!(relocate("pythonw.exe"), pythonw.path());
-    assert_eq!(relocate(".python.exe"), python.path());
+    assert_eq!(relocate(".pythonw.exe")?.python_path(), pythonw.path());
+    assert_eq!(relocate("pythonw.exe")?.python_path(), pythonw.path());
+    assert_eq!(relocate(".python.exe")?.python_path(), python.path());
     Ok(())
 }
 

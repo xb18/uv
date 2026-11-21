@@ -31,24 +31,6 @@ pub fn windowed_python_executable(python: &Path) -> PathBuf {
         .unwrap_or_else(|| python.to_path_buf())
 }
 
-/// Select the interpreter for a relocated launcher from its stored target name.
-#[cfg(windows)]
-pub fn relocated_python_executable(stored: &Path, previous: &Path, replacement: &Path) -> PathBuf {
-    let is_windowed = stored
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            name.eq_ignore_ascii_case("pythonw.exe")
-                || windowed_python_name(previous)
-                    .is_some_and(|windowed| name.eq_ignore_ascii_case(&windowed))
-        });
-    if is_windowed {
-        windowed_python_executable(replacement)
-    } else {
-        replacement.to_path_buf()
-    }
-}
-
 #[cfg(all(windows, target_arch = "x86"))]
 const LAUNCHER_I686_GUI: &[u8] = include_bytes!("../trampolines/uv-trampoline-i686-gui.exe");
 
@@ -154,8 +136,27 @@ impl Launcher {
         Path::new(&self.python_path)
     }
 
+    /// Point the launcher at a replacement interpreter, selecting its windowed
+    /// counterpart when the stored target is the windowed form of the previous one.
+    pub fn relocate(self, previous: &Path, replacement: &Path) -> Result<Self, Error> {
+        let is_windowed = self
+            .python_path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.eq_ignore_ascii_case("pythonw.exe")
+                    || windowed_python_name(previous)
+                        .is_some_and(|windowed| name.eq_ignore_ascii_case(&windowed))
+            });
+        if is_windowed {
+            self.with_python_path(windowed_python_executable(replacement))
+        } else {
+            self.with_python_path(replacement)
+        }
+    }
+
     /// Encode a replacement path in the launcher's UTF-8 resource.
-    pub fn with_python_path(self, path: impl AsRef<Path>) -> Result<Self, Error> {
+    fn with_python_path(self, path: impl AsRef<Path>) -> Result<Self, Error> {
         Ok(Self {
             python_path: encode_python_path(&path)?.to_owned(),
             ..self

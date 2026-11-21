@@ -1169,6 +1169,8 @@ fn rewriting_preserves_the_window_mode() -> Result<()> {
     let dir = assert_fs::TempDir::new()?;
     let source = dir.child("source.exe");
     let destination = dir.child("destination.exe");
+    let python = dir.child("python.exe");
+    File::create(dir.child("pythonw.exe").path())?;
     for (is_gui, name, expected) in [
         (true, "python.exe", IMAGE_SUBSYSTEM_WINDOWS_GUI),
         (false, "pythonw.exe", IMAGE_SUBSYSTEM_WINDOWS_CUI),
@@ -1180,9 +1182,9 @@ fn rewriting_preserves_the_window_mode() -> Result<()> {
         assert_eq!(subsystem(source.path())?, expected);
         let launcher =
             Launcher::try_from_path(source.path())?.context("Missing script launcher")?;
-        launcher
-            .with_python_path(dir.path().join(name))?
-            .write_to_file(&mut File::create(destination.path())?)?;
+        let launcher = launcher.relocate(Path::new("python.exe"), python.path())?;
+        assert_eq!(launcher.python_path(), dir.path().join(name));
+        launcher.write_to_file(&mut File::create(destination.path())?)?;
         assert_eq!(subsystem(destination.path())?, expected);
     }
     Ok(())

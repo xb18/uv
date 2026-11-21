@@ -104,6 +104,37 @@ async fn launcher_junction_restored_after_probe() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn launcher_checks_junction_change_time() -> Result<()> {
+    let temp = tempdir()?;
+    let dir = dunce::canonicalize(temp.path())?;
+    let base = dir.join("base.exe");
+    fs::write(&base, [])?;
+    let scripts = dir.join("Scripts");
+    let alias = dir.join("alias");
+    fs::create_dir(&scripts)?;
+    uv_fs::create_symlink(&scripts, &alias)?;
+    let proxy = alias.join("python.exe");
+    fs::write(&proxy, windows_python_launcher(&base, WindowMode::Console)?)?;
+
+    let target = ExecutableTarget::identify(&proxy)?;
+    let mut resolved = target.for_cache(&proxy)?.expect("cache target");
+    assert!(resolved.launcher_matches_probe(Some(&base), None));
+
+    // Model a snapshot taken before an in-place reparse point update. The
+    // destination, parent directory and other timestamps match after restoration.
+    let (_, source) = resolved.launcher.as_mut().expect("launcher");
+    let changed = source
+        .ancestor_timestamps
+        .iter_mut()
+        .find_map(|times| times.link_changed.as_mut())
+        .expect("junction change time");
+    assert_eq!(*changed, uv_fs::symlink_change_time(&alias)?);
+    *changed -= 1;
+    assert!(!resolved.launcher_matches_probe(Some(&base), None));
+    Ok(())
+}
+
 #[tokio::test]
 async fn launcher_junction_moves_during_probe() -> Result<()> {
     let dir = tempdir()?;

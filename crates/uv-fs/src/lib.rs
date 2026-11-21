@@ -46,6 +46,39 @@ pub mod which;
 #[cfg(windows)]
 pub mod wow64;
 
+/// Return the metadata change time of a Windows link itself.
+#[cfg(windows)]
+pub fn symlink_change_time(path: &Path) -> io::Result<i64> {
+    use fs_err::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES, FileBasicInfo, GetFileInformationByHandleEx,
+    };
+
+    // `MetadataExt::change_time` is unstable. Open the reparse point to query
+    // its basic information even when the link points to a directory.
+    let file = fs_err::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES.0)
+        .custom_flags((FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT).0)
+        .open(path)?;
+    let mut info = FILE_BASIC_INFO::default();
+    // SAFETY: The file stays open and `info` is a writable buffer of the
+    // type and size required by `FileBasicInfo`.
+    #[expect(unsafe_code)]
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(file.as_raw_handle()),
+            FileBasicInfo,
+            (&raw mut info).cast(),
+            u32::try_from(size_of::<FILE_BASIC_INFO>()).expect("FILE_BASIC_INFO size fits in u32"),
+        )?;
+    }
+    if info.ChangeTime == 0 {
+        return Err(io::ErrorKind::Unsupported.into());
+    }
+    Ok(info.ChangeTime)
+}
+
 /// Return the number of hardlinks to a file.
 #[cfg(unix)]
 pub fn hardlink_count(path: &Path) -> io::Result<u64> {

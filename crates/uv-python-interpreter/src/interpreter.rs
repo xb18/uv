@@ -1226,7 +1226,15 @@ impl CacheTarget<'_> {
 struct LinkSnapshot {
     target: PathBuf,
     redirects: Vec<PathBuf>,
-    ancestor_timestamps: Vec<(u64, u64)>,
+    ancestor_timestamps: Vec<AncestorTimestamps>,
+}
+
+#[cfg(windows)]
+#[derive(PartialEq, Eq)]
+struct AncestorTimestamps {
+    created: u64,
+    modified: u64,
+    link_changed: Option<i64>,
 }
 
 #[cfg(windows)]
@@ -1250,9 +1258,18 @@ impl LinkSnapshot {
             let mut redirect = None;
             for path in target.ancestors() {
                 let metadata = fs::symlink_metadata(path).ok()?;
-                snapshot
-                    .ancestor_timestamps
-                    .push((metadata.creation_time(), metadata.last_write_time()));
+                // Setting reparse data in place updates the junction's change
+                // time even if its last write time and parent stay the same.
+                let link_changed = if metadata.is_symlink() {
+                    Some(uv_fs::symlink_change_time(path).ok()?)
+                } else {
+                    None
+                };
+                snapshot.ancestor_timestamps.push(AncestorTimestamps {
+                    created: metadata.creation_time(),
+                    modified: metadata.last_write_time(),
+                    link_changed,
+                });
                 if canonical.starts_with(path) {
                     break;
                 }

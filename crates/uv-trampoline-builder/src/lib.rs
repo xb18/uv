@@ -19,8 +19,24 @@ mod resource_tests;
 
 fn windowed_python_name(python: &Path) -> Option<String> {
     let name = python.file_name()?.to_str()?;
-    name.contains("python")
-        .then(|| name.replace("python", "pythonw"))
+    #[cfg(windows)]
+    let search = name.to_ascii_lowercase();
+    #[cfg(not(windows))]
+    let search = name;
+    let mut windowed = String::new();
+    let mut start = 0;
+    for (index, matched) in search.match_indices("python") {
+        // ASCII case folding leaves offsets in the original name intact.
+        let end = index + matched.len();
+        windowed.push_str(&name[start..end]);
+        windowed.push('w');
+        start = end;
+    }
+    if start == 0 {
+        return None;
+    }
+    windowed.push_str(&name[start..]);
+    Some(windowed)
 }
 
 /// Whether a lowercase executable stem names one of the windowed interpreter

@@ -1146,14 +1146,13 @@ impl CacheTarget<'_> {
     /// Determine whether the probe result can be cached and record any discovered file inputs.
     fn determine_cacheability(
         &self,
-        executable: &Path,
         #[cfg(windows)] links: Option<&LinkSnapshot>,
         wire: &InterpreterInfoWire,
         probe_start: Option<Timestamp>,
         file_timestamps: &mut HashMap<PathBuf, Option<Timestamp>>,
     ) -> bool {
         // Shims such as pyenv can redirect to a different interpreter without changing the shim.
-        if !is_same_file(executable, &wire.metadata.sys_executable).unwrap_or(false) {
+        if !is_same_file(self.absolute, &wire.metadata.sys_executable).unwrap_or(false) {
             return false;
         }
 
@@ -1169,7 +1168,7 @@ impl CacheTarget<'_> {
         };
 
         #[cfg(windows)]
-        if !wire.metadata.shares_cache_inputs(executable, &current) {
+        if !wire.metadata.shares_cache_inputs(self.absolute, &current) {
             return false;
         }
 
@@ -1894,7 +1893,6 @@ impl InterpreterInfo {
         let (wire, probe_start) = probe()?;
 
         let cacheable = resolved.determine_cacheability(
-            executable,
             #[cfg(windows)]
             links.as_ref(),
             &wire,

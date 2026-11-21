@@ -958,13 +958,14 @@ impl<'a> ExecutableTarget<'a> {
             }
             BrokenLinkKind::Trampoline(target.clone())
         } else {
-            // Windows venv launchers locate the config from their own module path.
-            let path = if cfg!(windows) {
-                self.absolute
-            } else {
-                executable
-            };
-            BrokenLinkKind::MissingHome(missing_python_home(path)?)
+            let home = missing_python_home(self.absolute)?;
+            #[cfg(unix)]
+            if !fails_without_site(self.absolute)
+                || missing_python_home(self.absolute).as_ref() != Some(&home)
+            {
+                return None;
+            }
+            BrokenLinkKind::MissingHome(home)
         };
         let current = Self::identify(self.absolute)?;
         if current.launcher != self.launcher {
@@ -2151,6 +2152,25 @@ fn missing_python_home(interpreter: &Path) -> Option<PathBuf> {
         missing.get_or_insert(home);
     }
     missing
+}
+
+/// A copied interpreter can find the standard library even with a stale home.
+/// Rule out a failed site hook or metadata query before allowing replacement.
+#[cfg(unix)]
+fn fails_without_site(interpreter: &Path) -> bool {
+    use std::process::Stdio;
+
+    trace!(
+        "Checking Python startup without site at `{}`",
+        interpreter.display()
+    );
+    let status = Command::new(interpreter)
+        .args(["-I", "-B", "-S", "-c", "pass"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    status.is_ok_and(|status| status.code().is_some_and(|code| code != 0))
 }
 
 #[cfg(test)]

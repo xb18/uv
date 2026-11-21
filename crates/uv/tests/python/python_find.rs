@@ -1037,6 +1037,44 @@ fn python_find_unsupported_version() {
     ");
 }
 
+#[cfg(unix)]
+#[test]
+fn python_find_copied_venv_stale_home() -> Result<()> {
+    let context = uv_test::test_context_with_versions!(&["3.12"]);
+    context
+        .python_command()
+        .args(["-m", "venv", "--copies", "--without-pip"])
+        .arg(context.venv.as_os_str())
+        .assert()
+        .success();
+
+    // CPython can locate its standard library by walking up from the missing directory.
+    let python = fs_err::canonicalize(&context.python_versions[0].1)?;
+    let home = python.with_file_name("missing-python-home");
+    assert!(!home.try_exists()?);
+    context
+        .venv
+        .child("pyvenv.cfg")
+        .write_str(&format!("home = {}\n", home.display()))?;
+    fs_err::write(
+        context.site_packages().join("reject-probe.pth"),
+        "import os, sys; sys.flags.isolated and os._exit(42)\n",
+    )?;
+    context
+        .python_command()
+        .args(["-c", "pass"])
+        .assert()
+        .success();
+
+    uv_snapshot!(context.filters(), context.python_find().arg(context.interpreter()), @"
+    exit_code: 2 (failure)
+    ----- stderr -----
+    error: Failed to inspect Python interpreter from provided path at `.venv/bin/python`
+      cause: Querying Python at `[VENV]/bin/python` failed with exit status exit status: 42
+    ");
+    Ok(())
+}
+
 #[test]
 #[cfg(windows)]
 fn python_find_venv_missing_home() -> Result<()> {

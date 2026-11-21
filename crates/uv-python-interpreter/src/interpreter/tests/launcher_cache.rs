@@ -446,6 +446,17 @@ async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
 
 #[cfg(feature = "test-python")]
 #[tokio::test]
+async fn interpreter_probe_works_with_unavailable_build_bucket() -> Result<()> {
+    let cache = Cache::temp()?;
+    // Occupy the bucket path so it cannot hold a probe directory.
+    fs::write(cache.bucket(uv_cache::CacheBucket::Builds), [])?;
+    let cache = cache.init().await?;
+    Interpreter::query(which::which("python")?, &cache)?;
+    Ok(())
+}
+
+#[cfg(feature = "test-python")]
+#[tokio::test]
 async fn venv_proxy_caches_a_real_interpreter_probe() -> Result<()> {
     let python = Interpreter::query(which::which("python")?, &Cache::temp()?.init().await?)?;
     let base = dunce::canonicalize(python.to_base_python()?)?;

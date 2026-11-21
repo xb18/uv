@@ -1641,7 +1641,9 @@ impl InterpreterInfo {
         // Isolate scratch files from the directory timestamps used to track
         // junctions and let cache pruning remove abandoned probes.
         #[cfg(windows)]
-        let tempdir = cache.build_dir()?;
+        let tempdir = cache
+            .build_dir()
+            .or_else(|_| tempfile::tempdir_in(cache.root()))?;
         #[cfg(not(windows))]
         let tempdir = tempfile::tempdir_in(cache.root())?;
         Self::setup_python_query_files(tempdir.path())?;

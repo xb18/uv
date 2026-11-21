@@ -1202,7 +1202,7 @@ fn relocate_windowed_interpreter_aliases() -> Result<()> {
             python_path: name.to_owned(),
             script_data: None,
         }
-        .relocate(Path::new(".PyThOn.exe"), python.path())
+        .relocate(Path::new(".Python.exe"), python.path())
     };
     assert_eq!(relocate(".pythonw.exe")?.python_path(), python.path());
     File::create(pythonw.path())?;
@@ -1215,8 +1215,8 @@ fn relocate_windowed_interpreter_aliases() -> Result<()> {
     assert_eq!(relocate("python3.13t.exe")?.python_path(), python.path());
     assert_eq!(relocate(".python.exe")?.python_path(), python.path());
     assert_eq!(
-        super::windowed_python_name(Path::new("π-PyThOn.EXE")).as_deref(),
-        Some("π-PyThOnw.EXE")
+        super::windowed_python_name(Path::new("π-Python.EXE")).as_deref(),
+        Some("π-Pythonw.EXE")
     );
     Ok(())
 }

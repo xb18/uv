@@ -120,7 +120,7 @@ impl Interpreter {
     pub fn clear_cache(executable: impl AsRef<Path>, cache: &Cache) -> Result<(), Error> {
         let executable = executable.as_ref();
         let absolute = std::path::absolute(executable)?;
-        let Some(target) = ExecutableTarget::identify(&absolute) else {
+        let Ok(target) = ExecutableTarget::identify(&absolute) else {
             return Ok(());
         };
         let Some(resolved) = target.for_cache(executable)? else {
@@ -903,8 +903,8 @@ impl Interpreter {
 pub fn canonicalize_executable(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     let path = path.as_ref();
     match ExecutableTarget::identify(path) {
-        Some(target) => target.canonicalize(),
-        None => Ok(path.to_path_buf()),
+        Ok(target) => target.canonicalize(),
+        Err(_) => Ok(path.to_path_buf()),
     }
 }
 
@@ -914,22 +914,19 @@ struct ExecutableTarget<'a> {
 }
 
 impl<'a> ExecutableTarget<'a> {
-    fn identify(path: &'a Path) -> Option<Self> {
+    fn identify(path: &'a Path) -> Result<Self, uv_trampoline_builder::Error> {
         debug_assert!(
             path.is_absolute(),
             "path must be absolute: {}",
             path.display()
         );
-        match uv_trampoline_builder::read_launcher_target(path) {
-            Ok(launcher) => Some(Self {
-                absolute: path,
-                launcher,
-            }),
-            Err(err) => {
-                trace!("Unresolved launcher target for `{}`: {err}", path.display());
-                None
-            }
-        }
+        let launcher = uv_trampoline_builder::read_launcher_target(path).inspect_err(|err| {
+            trace!("Unresolved launcher target for `{}`: {err}", path.display());
+        })?;
+        Ok(Self {
+            absolute: path,
+            launcher,
+        })
     }
 
     fn canonicalize(&self) -> io::Result<PathBuf> {
@@ -959,7 +956,7 @@ impl<'a> ExecutableTarget<'a> {
         if !missing {
             return None;
         }
-        let current = Self::identify(self.absolute)?;
+        let current = Self::identify(self.absolute).ok()?;
         if current.launcher != self.launcher {
             return None;
         }
@@ -1100,7 +1097,7 @@ impl CacheTarget<'_> {
             return false;
         }
         // A managed junction can redirect the launcher during the probe.
-        let Some(target) = ExecutableTarget::identify(self.target.absolute) else {
+        let Ok(target) = ExecutableTarget::identify(self.target.absolute) else {
             return false;
         };
         let Ok(Some(current)) = target.for_cache(self.target.absolute) else {
@@ -1833,7 +1830,7 @@ impl InterpreterInfo {
         let absolute = std::path::absolute(executable)?;
 
         let uncached = |(wire, _)| Self::from_probe(executable, wire, HashMap::new());
-        let Some(target) = ExecutableTarget::identify(&absolute) else {
+        let Ok(target) = ExecutableTarget::identify(&absolute) else {
             // A venv launcher reports itself as `sys.executable`. Its timestamp
             // cannot invalidate metadata when the selected interpreter changes.
             return uncached(probe()?);

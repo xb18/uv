@@ -961,6 +961,20 @@ fn nul_in_target_is_rejected() -> Result<()> {
 }
 
 #[test]
+fn windowed_name_does_not_substitute_an_unpaired_surrogate() -> Result<()> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+
+    let dir = assert_fs::TempDir::new()?;
+    let mut name = OsString::from_wide(&[0xd800]);
+    name.push("python.exe");
+    let python = dir.path().join(name);
+    File::create(dir.path().join("\u{fffd}pythonw.exe"))?;
+    assert_eq!(super::windowed_python_executable(&python), python);
+    Ok(())
+}
+
+#[test]
 fn unpaired_surrogate_in_target_is_rejected() {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;

@@ -18,7 +18,7 @@ mod resource_reader;
 mod resource_tests;
 
 fn windowed_python_name(python: &Path) -> Option<String> {
-    let name = python.file_name()?.to_string_lossy();
+    let name = python.file_name()?.to_str()?;
     name.contains("python")
         .then(|| name.replace("python", "pythonw"))
 }

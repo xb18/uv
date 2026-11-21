@@ -91,16 +91,19 @@ fn path_may_redirect(path: &Path, windows: &Path) -> io::Result<bool> {
             && same_file::is_same_file(parent, windows)?
         {
             let suffix = path.strip_prefix(ancestor).expect("ancestor of path");
-            if name.eq_ignore_ascii_case("LastGood") {
-                return Ok(suffix
+            let redirected = if name.eq_ignore_ascii_case("LastGood") {
+                suffix
                     .iter()
                     .next()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("System32")));
+                    .is_some_and(|name| name.eq_ignore_ascii_case("System32"))
+            } else {
+                !name.eq_ignore_ascii_case("System32") || !wow64_shared_subdirectory(suffix)
+            };
+            // An exempt suffix reached through a junction can still have
+            // a redirected component closer to the root.
+            if redirected {
+                return Ok(true);
             }
-            if name.eq_ignore_ascii_case("System32") {
-                return Ok(!wow64_shared_subdirectory(suffix));
-            }
-            return Ok(true);
         }
     }
     Ok(false)
@@ -139,6 +142,25 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join(r"Sysnative\python.exe");
         assert!(!any_path_may_redirect([path])?);
+        Ok(())
+    }
+
+    #[test]
+    fn outer_system32_redirects_before_an_inner_exemption() -> io::Result<()> {
+        let windows = tempfile::tempdir()?;
+        let system = windows.path().join("System32");
+        std::fs::create_dir(&system)?;
+        let junction = system.join("alias");
+        crate::create_symlink(windows.path(), &junction)?;
+        for suffix in [
+            r"System32\drivers\etc\python.exe",
+            r"LastGood\custom\python.exe",
+        ] {
+            assert!(super::path_may_redirect(
+                &junction.join(suffix),
+                windows.path()
+            )?);
+        }
         Ok(())
     }
 

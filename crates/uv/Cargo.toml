@@ -191,7 +191,7 @@ test-pypi = ["uv-client/test-pypi"]
 # Introduces a testing dependency on R2.
 test-r2 = []
 # Introduces a testing dependency on a local Python installation.
-test-python = []
+test-python = ["uv-python-interpreter/test-python"]
 # Introduces a testing dependency on a local Python installation with specific patch versions.
 test-python-patch = []
 # Introduces a testing dependency on a local Python installation with an EOL version.

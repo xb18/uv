@@ -412,6 +412,7 @@ async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "test-python")]
 #[tokio::test]
 async fn venv_proxy_caches_a_real_interpreter_probe() -> Result<()> {
     let cache = Cache::temp()?.init().await?;

@@ -434,11 +434,14 @@ async fn venv_proxy_caches_a_real_interpreter_probe() -> Result<()> {
     let python = Interpreter::query(which::which("python")?, &cache)?;
     let base = dunce::canonicalize(python.to_base_python()?)?;
     let home = base.parent().expect("base interpreter directory");
-    let dir = tempdir()?;
-    let scripts = dir.path().join("Scripts");
-    fs::create_dir(&scripts)?;
+    // Keep the junction and its destination under one private root so other
+    // tests creating temporary directories cannot change a tracked timestamp.
+    let root = dunce::canonicalize(cache.root())?;
+    let venv = root.join("venv");
+    let scripts = venv.join("Scripts");
+    fs::create_dir_all(&scripts)?;
     fs::write(
-        dir.path().join("pyvenv.cfg"),
+        venv.join("pyvenv.cfg"),
         format!(
             "home = {}\ninclude-system-site-packages = false\n",
             home.display()
@@ -450,8 +453,8 @@ async fn venv_proxy_caches_a_real_interpreter_probe() -> Result<()> {
 
     // The probe must be cacheable even when its scratch space is in the
     // cache that contains the venv junction.
-    let active = cache.root().join("active");
-    uv_fs::create_symlink(dir.path(), &active)?;
+    let active = root.join("active");
+    uv_fs::create_symlink(&venv, &active)?;
     let proxy = active.join(r"Scripts\python.exe");
     let interpreter = Interpreter::query(&proxy, &cache)?;
     assert!(interpreter.is_virtualenv());

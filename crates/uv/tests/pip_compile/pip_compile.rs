@@ -19714,7 +19714,7 @@ fn compile_broken_active_venv() -> Result<()> {
         .arg("venv2"), @"
     exit_code: 2 (failure)
     ----- stderr -----
-    error: No interpreter found at path `python3.14159`
+    error: Broken Python symlink from `python3.14159` to `/does/not/exist`
     ");
 
     // Simulate a removed Python interpreter

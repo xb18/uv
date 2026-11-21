@@ -195,14 +195,6 @@ reason = "used for Windows platform discovery"
 [[override]]
 lint = "hawk::dead_public"
 crate = "uv_static"
-item = "env_vars::EnvVars::PYTHONHOME"
-kind = "inherent_associated_constant"
-level = "expect"
-reason = "read by generated activation scripts"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "uv_static"
 item = "env_vars::EnvVars::UV_UNMANAGED_INSTALL"
 kind = "inherent_associated_constant"
 level = "expect"

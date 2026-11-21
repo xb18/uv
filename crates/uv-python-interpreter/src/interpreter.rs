@@ -2160,6 +2160,16 @@ fn missing_python_home(interpreter: &Path) -> Option<PathBuf> {
 fn fails_without_site(interpreter: &Path) -> bool {
     use std::process::Stdio;
 
+    // Isolated mode ignores these overrides. They can supply a standard
+    // library that the user's interpreter needs for ordinary startup.
+    if [EnvVars::PYTHONHOME, EnvVars::PYTHONPATH]
+        .into_iter()
+        .filter_map(env::var_os)
+        .any(|value| !value.is_empty())
+    {
+        return false;
+    }
+
     trace!(
         "Checking Python startup without site at `{}`",
         interpreter.display()

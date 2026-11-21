@@ -370,6 +370,37 @@ async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
 }
 
 #[tokio::test]
+async fn venv_proxy_caches_a_real_interpreter_probe() -> Result<()> {
+    let cache = Cache::temp()?.init().await?;
+    let python = Interpreter::query(which::which("python")?, &cache)?;
+    let base = dunce::canonicalize(python.to_base_python()?)?;
+    let home = base.parent().expect("base interpreter directory");
+    let dir = tempdir()?;
+    let scripts = dir.path().join("Scripts");
+    fs::create_dir(&scripts)?;
+    fs::write(
+        dir.path().join("pyvenv.cfg"),
+        format!(
+            "home = {}\ninclude-system-site-packages = false\n",
+            home.display()
+        ),
+    )?;
+    let proxy = scripts.join("python.exe");
+    fs::write(&proxy, windows_python_launcher(&base, WindowMode::Console)?)?;
+    assert_eq!(canonicalize_executable(&proxy)?, base);
+
+    let interpreter = Interpreter::query(&proxy, &cache)?;
+    assert!(interpreter.is_virtualenv());
+    assert!(same_file::is_same_file(
+        interpreter.sys_executable(),
+        &proxy
+    )?);
+    assert_eq!(dunce::canonicalize(interpreter.to_base_python()?)?, base);
+    InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn direct_launcher_cache_tracks_target() -> Result<()> {
     let dir = tempdir()?;
     let proxy = dir.path().join("python.exe");

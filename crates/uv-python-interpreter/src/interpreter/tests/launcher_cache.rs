@@ -338,9 +338,11 @@ async fn junction_selects_venvs_with_a_shared_proxy() -> Result<()> {
     )?;
     // Both venvs reach the same launcher and interpreter, but each has
     // its own configuration despite identical modification times.
-    for include_site in [false, true] {
-        let venv = dir.path().join(include_site.to_string());
-        fs::create_dir(&venv)?;
+    let isolated = dir.path().join("isolated");
+    let system_site = dir.path().join("system-site");
+    let environments = [(&isolated, false), (&system_site, true)];
+    for (venv, include_site) in environments {
+        fs::create_dir(venv)?;
         uv_fs::create_symlink(&scripts, venv.join("Scripts"))?;
         let config = venv.join("pyvenv.cfg");
         fs::write(
@@ -351,16 +353,29 @@ async fn junction_selects_venvs_with_a_shared_proxy() -> Result<()> {
             .write(true)
             .open(&config)?
             .set_modified(UNIX_EPOCH)?;
-        uv_fs::replace_symlink(&venv, &active)?;
-        let mut response = mocked_interpreter_response(&proxy)?;
+    }
+    let probe = || {
+        let mut response = mocked_interpreter_response(&proxy).expect("Valid mocked metadata");
         response.metadata.sys_base_executable = Some(base.clone());
-        if !include_site {
+        if fs::read_to_string(active.join("pyvenv.cfg"))?.ends_with("false\n") {
             response.metadata.sys_path.clear();
         }
-        let expected = response.metadata.sys_path.clone();
-        InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
+        Ok((response, None))
+    };
+    // The key selects the isolated environment, but the probe sees system
+    // packages. Those results must not populate the isolated environment's cache.
+    uv_fs::create_symlink(&isolated, &active)?;
+    let info = InterpreterInfo::query_cached(&proxy, &cache, || {
+        uv_fs::replace_symlink(&system_site, &active)?;
+        probe()
+    })?;
+    assert!(!info.metadata.sys_path.is_empty());
+
+    for (venv, include_site) in environments {
+        uv_fs::replace_symlink(venv, &active)?;
+        InterpreterInfo::query_cached(&proxy, &cache, probe)?;
         let info = InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
-        assert_eq!(info.metadata.sys_path, expected);
+        assert_eq!(!info.metadata.sys_path.is_empty(), include_site);
     }
     Ok(())
 }

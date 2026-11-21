@@ -106,6 +106,15 @@ async fn launcher_junction_restored_after_probe() -> Result<()> {
 
 #[test]
 fn launcher_checks_junction_change_time() -> Result<()> {
+    use std::os::windows::io::AsRawHandle;
+
+    use fs_err::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_WRITE_ATTRIBUTES, FileBasicInfo, SetFileInformationByHandle,
+    };
+
     let temp = tempdir()?;
     let dir = dunce::canonicalize(temp.path())?;
     let base = dir.join("base.exe");
@@ -118,19 +127,31 @@ fn launcher_checks_junction_change_time() -> Result<()> {
     fs::write(&proxy, windows_python_launcher(&base, WindowMode::Console)?)?;
 
     let target = ExecutableTarget::identify(&proxy)?;
-    let mut resolved = target.for_cache(&proxy)?.expect("cache target");
+    let resolved = target.for_cache(&proxy)?.expect("cache target");
     assert!(resolved.launcher_matches_probe(Some(&base), None));
 
-    // Model a snapshot taken before an in-place reparse point update. The
-    // destination, parent directory and other timestamps match after restoration.
-    let (_, source) = resolved.launcher.as_mut().expect("launcher");
-    let changed = source
-        .ancestor_timestamps
-        .iter_mut()
-        .find_map(|times| times.link_changed.as_mut())
-        .expect("junction change time");
-    assert_eq!(*changed, uv_fs::symlink_change_time(&alias)?);
-    *changed -= 1;
+    // Set only the junction's change time. Zero fields in `FileBasicInfo`
+    // leave the other timestamps and attributes intact.
+    let file = fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES.0)
+        .custom_flags((FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT).0)
+        .open(&alias)?;
+    let info = FILE_BASIC_INFO {
+        ChangeTime: 116_444_736_000_000_000, // Unix epoch in FILETIME units
+        ..FILE_BASIC_INFO::default()
+    };
+    // SAFETY: The handle and the correctly sized `FileBasicInfo` buffer
+    // are valid for the duration of the call.
+    #[expect(unsafe_code)]
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileBasicInfo,
+            (&raw const info).cast(),
+            u32::try_from(size_of::<FILE_BASIC_INFO>())?,
+        )?;
+    }
+    drop(file);
     assert!(!resolved.launcher_matches_probe(Some(&base), None));
     Ok(())
 }

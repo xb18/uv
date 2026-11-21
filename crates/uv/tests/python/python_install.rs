@@ -3400,12 +3400,14 @@ fn uninstall_last_patch() {
     "
     );
 
+    let context = context.with_filter(("python3", "python"));
+
     #[cfg(unix)]
     uv_snapshot!(context.filters(), context.run().arg("python").arg("--version"), @"
     exit_code: 2 (failure)
     ----- stderr -----
     error: Failed to inspect Python interpreter from active virtual environment at `.venv/[BIN]/python`
-      cause: Broken Python symlink from `.venv/[BIN]/python` to `[TEMP_DIR]/managed/cpython-3.10-[PLATFORM]/[BIN]/python3.10`
+      cause: Broken symlink at `.venv/[BIN]/python`, was the underlying Python interpreter removed?
 
     hint: Consider recreating the environment (e.g., with `uv venv`)
     "

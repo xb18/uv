@@ -19714,7 +19714,7 @@ fn compile_broken_active_venv() -> Result<()> {
         .arg("venv2"), @"
     exit_code: 2 (failure)
     ----- stderr -----
-    error: Broken Python symlink from `python3.14159` to `/does/not/exist`
+    error: No interpreter found at path `python3.14159`
     ");
 
     // Simulate a removed Python interpreter
@@ -19726,7 +19726,7 @@ fn compile_broken_active_venv() -> Result<()> {
     exit_code: 2 (failure)
     ----- stderr -----
     error: Failed to inspect Python interpreter from active virtual environment at `.venv/bin/python`
-      cause: Broken Python symlink from `.venv/bin/python` to `/removed/python/interpreter`
+      cause: Broken symlink at `.venv/bin/python`, was the underlying Python interpreter removed?
 
     hint: Consider recreating the environment (e.g., with `uv venv`)
     ");

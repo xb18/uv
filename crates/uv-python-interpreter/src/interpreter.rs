@@ -952,26 +952,19 @@ impl<'a> ExecutableTarget<'a> {
     fn broken_link(&self, executable: &Path) -> Option<BrokenLink> {
         // A uv launcher selects Python from its resources. CPython's venv
         // launcher selects by home and reports localized errors if it's removed.
-        let kind = if let Some((_, target)) = &self.launcher {
-            if target.try_exists().ok()? {
-                return None;
-            }
-            BrokenLinkKind::Trampoline(target.clone())
-        } else {
-            let home = missing_python_home(self.absolute)?;
-            #[cfg(unix)]
-            if !fails_without_site(self.absolute)
-                || missing_python_home(self.absolute).as_ref() != Some(&home)
-            {
-                return None;
-            }
-            BrokenLinkKind::MissingHome(home)
+        let missing = match &self.launcher {
+            Some((_, target)) => !target.try_exists().ok()?,
+            None => !python_home(executable)?.try_exists().ok()?,
         };
+        if !missing {
+            return None;
+        }
         let current = Self::identify(self.absolute)?;
         if current.launcher != self.launcher {
             return None;
         }
-        Some(self.link_error(executable, kind))
+        let target = current.launcher.map(|(_, target)| target);
+        Some(self.link_error(executable, BrokenLinkKind::Trampoline(target)))
     }
 
     fn link_error(&self, executable: &Path, kind: BrokenLinkKind) -> BrokenLink {
@@ -1411,7 +1404,7 @@ impl uv_errors::Hinted for Error {
     }
 }
 
-#[derive(Clone, Debug, Error)]
+#[derive(Debug, Error)]
 pub struct BrokenLink {
     path: PathBuf,
     kind: BrokenLinkKind,
@@ -1419,11 +1412,10 @@ pub struct BrokenLink {
     venv: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 enum BrokenLinkKind {
     Symlink(Option<PathBuf>),
-    Trampoline(PathBuf),
-    MissingHome(PathBuf),
+    Trampoline(Option<PathBuf>),
 }
 
 impl BrokenLink {
@@ -1434,27 +1426,19 @@ impl BrokenLink {
 
     fn target(&self) -> Option<&Path> {
         match &self.kind {
-            BrokenLinkKind::Symlink(target) => target.as_deref(),
-            BrokenLinkKind::Trampoline(target) => Some(target),
-            BrokenLinkKind::MissingHome(_) => None,
+            BrokenLinkKind::Symlink(target) | BrokenLinkKind::Trampoline(target) => {
+                target.as_deref()
+            }
         }
     }
 
     /// Format a warning for a caller skipping the environment containing this link.
     pub fn ignored_environment_warning(&self) -> impl Display + '_ {
         std::fmt::from_fn(|f| {
-            let path = self.path.user_display();
-            if let BrokenLinkKind::MissingHome(home) = &self.kind {
-                return write!(
-                    f,
-                    "Ignoring existing virtual environment for `{}` because its configured Python home `{}` does not exist",
-                    path.cyan(),
-                    home.user_display().cyan()
-                );
-            }
             f.write_str(
                 "Ignoring existing virtual environment linked to non-existent Python interpreter: ",
             )?;
+            let path = self.path.user_display();
             if let Some(target) = self.target() {
                 write!(f, "`{}` -> `{}`", path.cyan(), target.user_display().cyan())
             } else {
@@ -1467,27 +1451,20 @@ impl BrokenLink {
 impl Display for BrokenLink {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
-            BrokenLinkKind::Symlink(Some(target)) => write!(
-                f,
-                "Broken Python symlink from `{}` to `{}`",
-                self.path.user_display(),
-                target.simplified_display()
-            ),
-            BrokenLinkKind::Symlink(None) => write!(
+            BrokenLinkKind::Symlink(_) => write!(
                 f,
                 "Broken symlink at `{}`, was the underlying Python interpreter removed?",
                 self.path.user_display()
             ),
-            BrokenLinkKind::Trampoline(target) => write!(
+            BrokenLinkKind::Trampoline(Some(target)) => write!(
                 f,
                 "Python trampoline at `{}` points to a missing interpreter at `{}`",
                 self.path.user_display(),
                 target.user_display()
             ),
-            BrokenLinkKind::MissingHome(home) => write!(
+            BrokenLinkKind::Trampoline(None) => write!(
                 f,
-                "Python home `{}` configured for `{}` does not exist",
-                home.user_display(),
+                "Broken Python trampoline at `{}`, was the underlying Python interpreter removed?",
                 self.path.user_display()
             ),
         }
@@ -2102,85 +2079,11 @@ fn find_base_python(
     }
 }
 
-/// A missing home in the environment's configuration can trigger its replacement.
-/// CPython's Windows venv launcher checks beside the executable first. A config
-/// there must also indicate a missing home before we infer one from a failed probe.
-fn missing_python_home(interpreter: &Path) -> Option<PathBuf> {
-    let parent = interpreter.parent()?;
-    let root = parent.parent()?;
-    #[cfg(unix)]
-    {
-        // A copied interpreter can lose its standard library when its home is
-        // removed. A symlink to an external installation identifies the base
-        // directly, even when the configured home is stale.
-        let target = fs::canonicalize(interpreter).ok()?;
-        if !is_same_file(target.parent()?, parent).ok()? {
-            return None;
-        }
-    }
-    #[cfg(windows)]
-    let view = uv_fs::wow64::FileSystemView::for_executable(interpreter);
-    let directories = [
-        #[cfg(windows)]
-        parent,
-        root,
-    ];
-    let mut missing = None;
-    for directory in directories {
-        let config = directory.join("pyvenv.cfg");
-        #[cfg(windows)]
-        if view.may_redirect(&config).ok()? {
-            return None;
-        }
-        let cfg = match PyVenvConfiguration::parse(&config) {
-            Ok(cfg) => cfg,
-            Err(crate::virtualenv::Error::ParsePyVenvCfg(_, err))
-                if directory != root && err.kind() == io::ErrorKind::NotFound =>
-            {
-                continue;
-            }
-            Err(_) => return None,
-        };
-        let home = cfg.home?;
-        #[cfg(windows)]
-        if view.may_redirect(&home).ok()? {
-            return None;
-        }
-        if home.try_exists().ok()? {
-            return None;
-        }
-        missing.get_or_insert(home);
-    }
-    missing
-}
-
-/// A copied interpreter can find the standard library even with a stale home.
-/// Rule out a failed site hook or metadata query before allowing replacement.
-#[cfg(unix)]
-fn fails_without_site(interpreter: &Path) -> bool {
-    use std::process::Stdio;
-
-    // Isolated mode ignores these overrides. They can supply a standard
-    // library that the user's interpreter needs for ordinary startup.
-    if [EnvVars::PYTHONHOME, EnvVars::PYTHONPATH]
-        .into_iter()
-        .filter_map(env::var_os)
-        .any(|value| !value.is_empty())
-    {
-        return false;
-    }
-
-    trace!(
-        "Checking Python startup without site at `{}`",
-        interpreter.display()
-    );
-    let status = Command::new(interpreter)
-        .args(["-I", "-B", "-S", "-c", "pass"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    status.is_ok_and(|status| status.code().is_some_and(|code| code != 0))
+/// Parse the `home` key from `pyvenv.cfg`, if any.
+fn python_home(interpreter: &Path) -> Option<PathBuf> {
+    let venv_root = interpreter.parent()?.parent()?;
+    let pyvenv_cfg = PyVenvConfiguration::parse(venv_root.join("pyvenv.cfg")).ok()?;
+    pyvenv_cfg.home
 }
 
 #[cfg(test)]
@@ -2221,83 +2124,6 @@ mod tests {
         let view = FileSystemView::for_executable(&exe);
         assert!(matches!(view, FileSystemView::Bit32), "{view:?}");
         Ok(Some(exe))
-    }
-
-    #[cfg(all(windows, target_pointer_width = "64"))]
-    #[test]
-    fn redirected_home_is_not_known_to_be_missing() -> Result<()> {
-        let windows = std::env::var_os("SystemRoot").expect("Windows directory");
-        let windows = Path::new(&windows);
-        let Some(wow64) = wow64_executable(windows)? else {
-            return Ok(());
-        };
-        let dir = tempdir()?;
-        let scripts = dir.path().join("Scripts");
-        fs::create_dir(&scripts)?;
-        let interpreter = scripts.join("python.exe");
-        let home = windows.join("Sysnative");
-        fs::write(
-            dir.path().join("pyvenv.cfg"),
-            format!("home = {}\n", home.display()),
-        )?;
-
-        // Sysnative exists only in the 32-bit view.
-        assert!(!home.try_exists()?);
-        fs::copy(wow64, &interpreter)?;
-        assert!(super::missing_python_home(&interpreter).is_none());
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn stale_home_does_not_hide_symlink_probe_failure() -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempdir()?;
-        let venv = dir.path().join(".venv");
-        let bin = venv.join("bin");
-        fs::create_dir_all(&bin)?;
-        fs::write(
-            venv.join("pyvenv.cfg"),
-            format!("home = {}\n", dir.path().join("missing").display()),
-        )?;
-        let base = dir.path().join("python");
-        fs::write(&base, "#!/bin/sh\nexit 42\n")?;
-        fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755))?;
-        let link = bin.join("python");
-        fs::os::unix::fs::symlink(&base, &link)?;
-
-        let cache = Cache::temp()?.init().await?;
-        let err = Interpreter::query(&link, &cache).unwrap_err();
-        assert!(
-            matches!(err, Error::StatusCode(ref e) if e.code.code() == Some(42)),
-            "{err}"
-        );
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn conflicting_configs_do_not_imply_a_missing_python_home() -> Result<()> {
-        let dir = tempdir()?;
-        let scripts = dir.path().join("Scripts");
-        fs::create_dir(&scripts)?;
-        let interpreter = scripts.join("python.exe");
-        let root = dir.path().join("pyvenv.cfg");
-        let sibling = scripts.join("pyvenv.cfg");
-        let present = format!("home = {}\n", dir.path().display());
-        let missing = dir.path().join("missing");
-
-        fs::write(&root, format!("home = {}\n", missing.display()))?;
-        assert_eq!(super::missing_python_home(&interpreter), Some(missing));
-        fs::write(&sibling, &present)?;
-        assert!(super::missing_python_home(&interpreter).is_none());
-        let sibling_home = dir.path().join("sibling-home");
-        fs::write(&sibling, format!("home = {}\n", sibling_home.display()))?;
-        assert_eq!(super::missing_python_home(&interpreter), Some(sibling_home));
-        fs::write(&root, &present)?;
-        assert!(super::missing_python_home(&interpreter).is_none());
-        Ok(())
     }
 
     fn mocked_interpreter_response(executable: &Path) -> Result<InterpreterInfoWire> {

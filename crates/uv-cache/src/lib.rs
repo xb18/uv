@@ -462,6 +462,12 @@ impl Cache {
         // Add the CACHEDIR.TAG.
         cachedir::ensure_tag(root)?;
 
+        // Windows interpreter probes track junctions by their parent directory's timestamp.
+        // Creating the build bucket during the first probe would invalidate a junction in
+        // the cache root. A read-only cache can still serve hits without a build bucket.
+        #[cfg(windows)]
+        let _ = fs_err::create_dir(root.join(CacheBucket::Builds.to_str()));
+
         // Add the .gitignore.
         match fs_err::OpenOptions::new()
             .write(true)

@@ -430,12 +430,12 @@ async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
 #[cfg(feature = "test-python")]
 #[tokio::test]
 async fn venv_proxy_caches_a_real_interpreter_probe() -> Result<()> {
-    let cache = Cache::temp()?.init().await?;
-    let python = Interpreter::query(which::which("python")?, &cache)?;
+    let python = Interpreter::query(which::which("python")?, &Cache::temp()?.init().await?)?;
     let base = dunce::canonicalize(python.to_base_python()?)?;
     let home = base.parent().expect("base interpreter directory");
     // Keep the junction and its destination under one private root so other
     // tests creating temporary directories cannot change a tracked timestamp.
+    let cache = Cache::temp()?.init().await?;
     let root = dunce::canonicalize(cache.root())?;
     let venv = root.join("venv");
     let scripts = venv.join("Scripts");

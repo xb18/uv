@@ -273,15 +273,32 @@ async fn nested_launcher_bypasses_cache() -> Result<()> {
         env::var_os(EnvVars::PYVENV_LAUNCHER).map(PathBuf::from),
     ));
     let legacy = entry.with_file(format!("{digest}.msgpack"));
-    assert_bypasses_fresh_entry(&cache, &legacy, &proxy, &info)?;
+    assert_bypasses_fresh_entry(&cache, &legacy, &proxy, &info)
+}
 
-    // A third-party shim can redirect Python without any uv resources.
-    fs::write(&target, [])?;
+#[tokio::test]
+async fn launcher_targeting_a_third_party_shim_bypasses_cache() -> Result<()> {
+    let dir = tempdir()?;
+    let proxy = dir.path().join("python.exe");
+    let shim = dir.path().join("shim.exe");
+    let base = dir.path().join("base.exe");
+    fs::write(&shim, [])?;
+    fs::write(&base, [])?;
+    fs::write(&proxy, windows_python_launcher(&shim, WindowMode::Console)?)?;
+
+    // A shim can run a different base interpreter on each invocation.
     for reported_base in [None, Some(base)] {
-        let mut response = mocked_interpreter_response(&proxy)?;
-        response.metadata.sys_base_executable = reported_base;
-        InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
-        assert!(!entry.path().exists());
+        let cache = Cache::temp()?.init().await?;
+        let mut probes = 0;
+        for _ in 0..2 {
+            let mut response = mocked_interpreter_response(&proxy)?;
+            response.metadata.sys_base_executable = reported_base.clone();
+            InterpreterInfo::query_cached(&proxy, &cache, || {
+                probes += 1;
+                Ok((response, None))
+            })?;
+        }
+        assert_eq!(probes, 2, "{reported_base:?}");
     }
 
     Ok(())

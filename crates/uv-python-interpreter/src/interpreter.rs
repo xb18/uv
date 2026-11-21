@@ -81,8 +81,8 @@ impl Interpreter {
             platform,
             metadata: info,
             ..
-        } = InterpreterInfo::query_cached(executable, cache, || {
-            InterpreterInfo::query(executable, cache)
+        } = InterpreterInfo::query_cached(executable, cache, |dir| {
+            InterpreterInfo::query(executable, dir)
         })?;
 
         debug_assert!(
@@ -1635,18 +1635,9 @@ impl InterpreterInfo {
     /// Query the given Python executable for its interpreter information.
     fn query(
         interpreter: &Path,
-        cache: &Cache,
+        tempdir: &Path,
     ) -> Result<(InterpreterInfoWire, Option<Timestamp>), Error> {
-        // A junction leading to a Windows launcher can live in the cache root.
-        // Isolate scratch files from the directory timestamps used to track
-        // junctions and let cache pruning remove abandoned probes.
-        #[cfg(windows)]
-        let tempdir = cache
-            .build_dir()
-            .or_else(|_| tempfile::tempdir_in(cache.root()))?;
-        #[cfg(not(windows))]
-        let tempdir = tempfile::tempdir_in(cache.root())?;
-        Self::setup_python_query_files(tempdir.path())?;
+        Self::setup_python_query_files(tempdir)?;
 
         // Sanitize the path by (1) running under isolated mode (`-I`) to ignore any site packages
         // modifications, and then (2) adding the path containing our query script to the front of
@@ -1657,7 +1648,7 @@ impl InterpreterInfo {
         // https://github.com/astral-sh/uv/issues/11508.
         let script = format!(
             r"import sys; sys.path = [{}] + sys.path; from python.get_interpreter_info import main; main()",
-            tempdir.path().escape_for_python()
+            tempdir.escape_for_python()
         );
         let mut command = Command::new(interpreter);
         command
@@ -1680,7 +1671,7 @@ impl InterpreterInfo {
         // Use a filesystem timestamp as the cutoff. On Unix, ctime can have coarser
         // resolution than the wall clock. On other platforms, mtime can predate replacement.
         let probe_start = if cfg!(unix) {
-            Timestamp::from_path(tempdir.path()).ok()
+            Timestamp::from_path(tempdir).ok()
         } else {
             None
         };
@@ -1861,34 +1852,52 @@ impl InterpreterInfo {
     fn query_cached(
         executable: &Path,
         cache: &Cache,
-        probe: impl FnOnce() -> Result<(InterpreterInfoWire, Option<Timestamp>), Error>,
+        probe: impl FnOnce(&Path) -> Result<(InterpreterInfoWire, Option<Timestamp>), Error>,
     ) -> Result<Self, Error> {
         let absolute = std::path::absolute(executable)?;
-
+        let scratch = || tempfile::tempdir_in(cache.root());
         let uncached = |(wire, _)| Self::from_probe(executable, wire, HashMap::new());
         let Ok(target) = ExecutableTarget::identify(&absolute) else {
             // A venv launcher reports itself as `sys.executable`. Its timestamp
             // cannot invalidate metadata when the selected interpreter changes.
-            return uncached(probe()?);
+            return uncached(probe(scratch()?.path())?);
         };
-        let probe = || probe().map_err(|err| target.diagnose_probe_error(executable, err));
+        let probe =
+            |dir: &Path| probe(dir).map_err(|err| target.diagnose_probe_error(executable, err));
         let Some(resolved) = target.for_cache(executable)? else {
-            return uncached(probe()?);
+            return uncached(probe(scratch()?.path())?);
         };
         let cache_entry = resolved.cache_entry(cache);
         if let Some(info) = Self::read_cached(cache, &cache_entry, executable) {
             return Ok(info);
         }
 
+        let dir = scratch()?;
+        // A launcher junction can have the cache root as its parent. Snapshot
+        // that route with the probe directory in place and keep the directory
+        // alive until the probe result has been checked.
+        #[cfg(windows)]
+        let (resolved, cache_entry) = if let Some((_, source)) = &resolved.launcher
+            && !source.redirects.is_empty()
+        {
+            let Some(current) = target.for_cache(executable)? else {
+                return uncached(probe(dir.path())?);
+            };
+            let entry = current.cache_entry(cache);
+            (current, entry)
+        } else {
+            (resolved, cache_entry)
+        };
+
         let inputs = resolved.file_timestamps(&BTreeSet::new());
         let Some(mut file_timestamps) = target.cache_input(executable, inputs)? else {
-            return uncached(probe()?);
+            return uncached(probe(dir.path())?);
         };
 
         #[cfg(windows)]
         let links = resolved.snapshot_links();
 
-        let (wire, probe_start) = probe()?;
+        let (wire, probe_start) = probe(dir.path())?;
 
         let cacheable = resolved.determine_cacheability(
             #[cfg(windows)]
@@ -2209,7 +2218,7 @@ mod tests {
         Ok(*response)
     }
 
-    fn unexpected_probe() -> Result<(InterpreterInfoWire, Option<Timestamp>), Error> {
+    fn unexpected_probe(_: &Path) -> Result<(InterpreterInfoWire, Option<Timestamp>), Error> {
         Err(io::Error::other("expected an interpreter cache hit").into())
     }
 
@@ -2225,7 +2234,7 @@ mod tests {
         let response = mocked_interpreter_response(&mocked_interpreter)?;
 
         let interpreter =
-            InterpreterInfo::query_cached(&mocked_interpreter, &cache, || Ok((response, None)))?;
+            InterpreterInfo::query_cached(&mocked_interpreter, &cache, |_| Ok((response, None)))?;
         assert_eq!(
             interpreter.metadata.markers.python_version().version,
             original_version
@@ -2277,7 +2286,7 @@ mod tests {
         fs::write(cache_entry.path(), rmp_serde::to_vec(&cached)?)?;
 
         let interpreter =
-            InterpreterInfo::query_cached(&mocked_interpreter, &cache, || Ok((response, None)))?;
+            InterpreterInfo::query_cached(&mocked_interpreter, &cache, |_| Ok((response, None)))?;
         assert_eq!(
             interpreter.metadata.markers.python_version().version,
             updated_version
@@ -2309,7 +2318,7 @@ mod tests {
         let response = mocked_interpreter_response(&mocked_interpreter)?;
 
         let interpreter =
-            InterpreterInfo::query_cached(&mocked_interpreter, &cache, || Ok((response, None)))?;
+            InterpreterInfo::query_cached(&mocked_interpreter, &cache, |_| Ok((response, None)))?;
         assert_eq!(
             interpreter.metadata.markers.python_full_version().version,
             original_version
@@ -2330,7 +2339,7 @@ mod tests {
             .with_python_full_version(updated_version.clone());
 
         let interpreter =
-            InterpreterInfo::query_cached(&mocked_interpreter, &cache, || Ok((response, None)))?;
+            InterpreterInfo::query_cached(&mocked_interpreter, &cache, |_| Ok((response, None)))?;
         assert_eq!(
             interpreter.metadata.markers.python_full_version().version,
             updated_version

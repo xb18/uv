@@ -84,7 +84,7 @@ async fn launcher_junction_restored_after_probe() -> Result<()> {
         response.metadata.sys_base_prefix = dunce::canonicalize(&current)?;
         Ok::<_, Error>((response, None))
     };
-    let info = InterpreterInfo::query_cached(&proxy, &cache, || {
+    let info = InterpreterInfo::query_cached(&proxy, &cache, |_| {
         // Move the original junction back with its own timestamps intact.
         let saved = managed.join("saved");
         fs::rename(&minor, &saved)?;
@@ -98,7 +98,7 @@ async fn launcher_junction_restored_after_probe() -> Result<()> {
     assert_eq!(canonicalize_executable(&proxy)?, resolved.canonical);
     assert!(!entry.path().exists());
 
-    InterpreterInfo::query_cached(&proxy, &cache, probe)?;
+    InterpreterInfo::query_cached(&proxy, &cache, |_| probe())?;
     let info = InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
     assert_eq!(info.metadata.sys_base_prefix, dunce::canonicalize(&first)?);
     Ok(())
@@ -129,7 +129,7 @@ async fn launcher_junction_moves_during_probe() -> Result<()> {
     );
     let mut response = mocked_interpreter_response(&proxy)?;
     response.metadata.sys_base_executable = Some(resolved.canonical.clone());
-    InterpreterInfo::query_cached(&proxy, &cache, || {
+    InterpreterInfo::query_cached(&proxy, &cache, |_| {
         // A minor-version update can move the junction while both the
         // proxy and the interpreter that answered the probe stay intact.
         uv_fs::replace_symlink(&second, &link)?;
@@ -186,7 +186,7 @@ async fn redirected_inputs_bypass_interpreter_cache() -> Result<()> {
     let mut response = mocked_interpreter_response(&executable)?;
     response.metadata.sys_base_executable = Some(target.clone());
     response.metadata.pointer_size = Bits32;
-    let info = InterpreterInfo::query_cached(&executable, &cache, || Ok((response, None)))?;
+    let info = InterpreterInfo::query_cached(&executable, &cache, |_| Ok((response, None)))?;
     assert!(!entry.path().exists());
 
     // Seed the incompatible response directly to check that cache reads reject it.
@@ -194,7 +194,7 @@ async fn redirected_inputs_bypass_interpreter_cache() -> Result<()> {
     fs::write(entry.path(), rmp_serde::to_vec(&info)?)?;
     let mut native = mocked_interpreter_response(&executable)?;
     native.metadata.sys_base_executable = Some(target);
-    let info = InterpreterInfo::query_cached(&executable, &cache, || Ok((native, None)))?;
+    let info = InterpreterInfo::query_cached(&executable, &cache, |_| Ok((native, None)))?;
     assert!(info.metadata.pointer_size.is_64());
     InterpreterInfo::query_cached(&executable, &cache, unexpected_probe)?;
     Ok(())
@@ -223,7 +223,7 @@ async fn launcher_probe_reports_a_separate_junction() -> Result<()> {
     let cache = Cache::temp()?.init().await?;
     let mut response = mocked_interpreter_response(&proxy)?;
     response.metadata.sys_base_executable = Some(reported.clone());
-    InterpreterInfo::query_cached(&proxy, &cache, || {
+    InterpreterInfo::query_cached(&proxy, &cache, |_| {
         // The shim runs Python through its own junction. By the time the
         // probe returns, that path can identify the shim itself.
         uv_fs::replace_symlink(&shim, &alias)?;
@@ -261,7 +261,7 @@ async fn nested_launcher_bypasses_cache() -> Result<()> {
     let entry = resolved.cache_entry(&cache);
     let mut response = mocked_interpreter_response(&proxy)?;
     response.metadata.sys_base_executable = Some(base.clone());
-    let info = InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
+    let info = InterpreterInfo::query_cached(&proxy, &cache, |_| Ok((response, None)))?;
     assert!(!entry.path().exists());
 
     // Older entries for an absolute target track both proxies. Their timestamps
@@ -293,7 +293,7 @@ async fn launcher_targeting_a_third_party_shim_bypasses_cache() -> Result<()> {
         for _ in 0..2 {
             let mut response = mocked_interpreter_response(&proxy)?;
             response.metadata.sys_base_executable = reported_base.clone();
-            InterpreterInfo::query_cached(&proxy, &cache, || {
+            InterpreterInfo::query_cached(&proxy, &cache, |_| {
                 probes += 1;
                 Ok((response, None))
             })?;
@@ -329,7 +329,7 @@ async fn retargeted_launcher_does_not_reuse_a_removed_alias() -> Result<()> {
             .set_modified(UNIX_EPOCH)?;
         let mut response = mocked_interpreter_response(&proxy)?;
         response.metadata.sys_base_executable = Some(dir.path().join(relative));
-        InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
+        InterpreterInfo::query_cached(&proxy, &cache, |_| Ok((response, None)))?;
         let info = InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
         Ok(info.metadata.sys_base_executable)
     };
@@ -382,7 +382,7 @@ async fn junction_selects_venvs_with_a_shared_proxy() -> Result<()> {
     // The key selects the isolated environment, but the probe sees system
     // packages. Those results must not populate the isolated environment's cache.
     uv_fs::create_symlink(&isolated, &active)?;
-    let info = InterpreterInfo::query_cached(&proxy, &cache, || {
+    let info = InterpreterInfo::query_cached(&proxy, &cache, |_| {
         uv_fs::replace_symlink(&system_site, &active)?;
         probe()
     })?;
@@ -390,7 +390,7 @@ async fn junction_selects_venvs_with_a_shared_proxy() -> Result<()> {
 
     for (venv, include_site) in environments {
         uv_fs::replace_symlink(venv, &active)?;
-        InterpreterInfo::query_cached(&proxy, &cache, probe)?;
+        InterpreterInfo::query_cached(&proxy, &cache, |_| probe())?;
         let info = InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
         assert_eq!(!info.metadata.sys_path.is_empty(), include_site);
     }
@@ -420,7 +420,7 @@ async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
     };
 
     replace(windows_python_launcher("base.exe", WindowMode::Console)?)?;
-    InterpreterInfo::query_cached(&executable, &cache, &mut probe)?;
+    InterpreterInfo::query_cached(&executable, &cache, |_| probe())?;
     InterpreterInfo::query_cached(&executable, &cache, unexpected_probe)?;
 
     // The script runs its own entry point even with the same interpreter
@@ -430,8 +430,8 @@ async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
         false,
         "base.exe",
     )?)?;
-    InterpreterInfo::query_cached(&executable, &cache, &mut probe)?;
-    InterpreterInfo::query_cached(&executable, &cache, probe)?;
+    InterpreterInfo::query_cached(&executable, &cache, |_| probe())?;
+    InterpreterInfo::query_cached(&executable, &cache, |_| probe())?;
     assert_eq!(probes, 3);
 
     // Eviction has no entry to remove even after the interpreter disappears.
@@ -441,17 +441,6 @@ async fn script_replacing_proxy_bypasses_cache() -> Result<()> {
         anyhow::bail!("expected a broken script launcher");
     };
     assert_eq!(link.target(), Some(target.as_path()));
-    Ok(())
-}
-
-#[cfg(feature = "test-python")]
-#[tokio::test]
-async fn interpreter_probe_works_with_unavailable_build_bucket() -> Result<()> {
-    let cache = Cache::temp()?;
-    // Occupy the bucket path so it cannot hold a probe directory.
-    fs::write(cache.bucket(uv_cache::CacheBucket::Builds), [])?;
-    let cache = cache.init().await?;
-    Interpreter::query(which::which("python")?, &cache)?;
     Ok(())
 }
 
@@ -513,18 +502,18 @@ async fn direct_launcher_cache_tracks_target() -> Result<()> {
         response.metadata.sys_base_executable = Some(target.clone());
         Ok((response, None))
     };
-    InterpreterInfo::query_cached(&proxy, &cache, &mut probe)?;
+    InterpreterInfo::query_cached(&proxy, &cache, |_| probe())?;
     InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
 
     fs::OpenOptions::new()
         .write(true)
         .open(&target)?
         .set_modified(UNIX_EPOCH)?;
-    InterpreterInfo::query_cached(&proxy, &cache, &mut probe)?;
+    InterpreterInfo::query_cached(&proxy, &cache, |_| probe())?;
     InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
 
     Interpreter::clear_cache(&proxy, &cache)?;
-    InterpreterInfo::query_cached(&proxy, &cache, probe)?;
+    InterpreterInfo::query_cached(&proxy, &cache, |_| probe())?;
     assert_eq!(probes, 3);
     Ok(())
 }
@@ -588,10 +577,10 @@ async fn proxy_target_removed_during_probe() -> Result<()> {
         windows_python_launcher("base.exe", WindowMode::Console)?,
     )?;
     let cache = Cache::temp()?.init().await?;
-    let err = InterpreterInfo::query_cached(&proxy, &cache, || {
+    let err = InterpreterInfo::query_cached(&proxy, &cache, |dir| {
         // The cache inputs exist when checked, but the proxy can no longer start Python.
         fs::remove_file(&target)?;
-        InterpreterInfo::query(&proxy, &cache)
+        InterpreterInfo::query(&proxy, dir)
     })
     .unwrap_err();
     let Error::BrokenLink(link) = err else {
@@ -646,7 +635,7 @@ async fn junction_loop_bypasses_cache() -> Result<()> {
     let cache = Cache::temp()?.init().await?;
     let mut response = mocked_interpreter_response(&proxy)?;
     response.metadata.sys_base_executable = Some(target.clone());
-    let cached = InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
+    let cached = InterpreterInfo::query_cached(&proxy, &cache, |_| Ok((response, None)))?;
     InterpreterInfo::query_cached(&proxy, &cache, unexpected_probe)?;
 
     // Move a junction onto its own destination, leaving the proxy intact.
@@ -667,7 +656,7 @@ async fn junction_loop_bypasses_cache() -> Result<()> {
     let mut response = mocked_interpreter_response(&proxy)?;
     response.metadata.sys_prefix = prefix.clone();
     response.metadata.sys_base_executable = Some(target);
-    let info = InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
+    let info = InterpreterInfo::query_cached(&proxy, &cache, |_| Ok((response, None)))?;
     assert_eq!(info.metadata.sys_prefix, prefix);
     let proxy_entry = proxy_only_entry(&proxy, &cache);
     assert!(!proxy_entry.path().exists());
@@ -693,7 +682,7 @@ async fn unresolved_launcher_bypasses_cache() -> Result<()> {
     let cache = Cache::temp()?.init().await?;
     let entry = proxy_only_entry(&proxy, &cache);
     let response = mocked_interpreter_response(&proxy)?;
-    let mut info = InterpreterInfo::query_cached(&proxy, &cache, || Ok((response, None)))?;
+    let mut info = InterpreterInfo::query_cached(&proxy, &cache, |_| Ok((response, None)))?;
     assert!(!entry.path().exists());
 
     // Seed an entry keyed on the proxy alone, with a fresh timestamp.
@@ -725,7 +714,7 @@ fn assert_bypasses_fresh_entry(
     assert!(InterpreterInfo::read_cached(cache, entry, proxy).is_some());
     let mut probed = false;
     let response = mocked_interpreter_response(proxy)?;
-    InterpreterInfo::query_cached(proxy, cache, || {
+    InterpreterInfo::query_cached(proxy, cache, |_| {
         probed = true;
         Ok((response, None))
     })?;

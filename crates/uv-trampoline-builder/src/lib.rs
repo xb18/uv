@@ -17,6 +17,38 @@ mod resource_reader;
 #[cfg(all(test, windows))]
 mod resource_tests;
 
+fn windowed_python_name(python: &Path) -> Option<String> {
+    let name = python.file_name()?.to_string_lossy();
+    name.contains("python")
+        .then(|| name.replace("python", "pythonw"))
+}
+
+/// Select the adjacent windowed interpreter for a GUI script when available.
+pub fn windowed_python_executable(python: &Path) -> PathBuf {
+    windowed_python_name(python)
+        .map(|name| python.with_file_name(name))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| python.to_path_buf())
+}
+
+/// Select the interpreter for a relocated launcher from its stored target name.
+#[cfg(windows)]
+pub fn relocated_python_executable(stored: &Path, previous: &Path, replacement: &Path) -> PathBuf {
+    let is_windowed = stored
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("pythonw.exe")
+                || windowed_python_name(previous)
+                    .is_some_and(|windowed| name.eq_ignore_ascii_case(&windowed))
+        });
+    if is_windowed {
+        windowed_python_executable(replacement)
+    } else {
+        replacement.to_path_buf()
+    }
+}
+
 #[cfg(all(windows, target_arch = "x86"))]
 const LAUNCHER_I686_GUI: &[u8] = include_bytes!("../trampolines/uv-trampoline-i686-gui.exe");
 

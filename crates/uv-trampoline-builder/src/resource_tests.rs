@@ -1175,6 +1175,22 @@ fn rewriting_preserves_the_window_mode() -> Result<()> {
 }
 
 #[test]
+fn relocate_overridden_windowed_interpreter() -> Result<()> {
+    let dir = assert_fs::TempDir::new()?;
+    let python = dir.child("python.exe");
+    let pythonw = dir.child("pythonw.exe");
+    let relocate = |name: &str| {
+        super::relocated_python_executable(Path::new(name), Path::new(".python.exe"), python.path())
+    };
+    assert_eq!(relocate(".pythonw.exe"), python.path());
+    File::create(pythonw.path())?;
+    assert_eq!(relocate(".pythonw.exe"), pythonw.path());
+    assert_eq!(relocate("pythonw.exe"), pythonw.path());
+    assert_eq!(relocate(".python.exe"), python.path());
+    Ok(())
+}
+
+#[test]
 fn large_script_survives_launcher_rewrites() -> Result<()> {
     let temp_dir = assert_fs::TempDir::new()?;
     let original_path = temp_dir.child("original.exe");

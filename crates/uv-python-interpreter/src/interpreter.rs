@@ -1638,6 +1638,16 @@ impl InterpreterInfo {
         interpreter: &Path,
         cache: &Cache,
     ) -> Result<(InterpreterInfoWire, Option<Timestamp>), Error> {
+        // A junction leading to a Windows launcher can live in the cache root.
+        // Keep scratch files below the interpreter bucket so probing doesn't
+        // repeatedly change the directory timestamp used to track that junction.
+        #[cfg(windows)]
+        let tempdir = {
+            let bucket = cache.bucket(CacheBucket::Interpreter);
+            fs::create_dir_all(&bucket)?;
+            tempfile::tempdir_in(bucket)?
+        };
+        #[cfg(not(windows))]
         let tempdir = tempfile::tempdir_in(cache.root())?;
         Self::setup_python_query_files(tempdir.path())?;
 

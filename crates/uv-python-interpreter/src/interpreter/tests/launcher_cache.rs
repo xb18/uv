@@ -448,6 +448,11 @@ async fn venv_proxy_caches_a_real_interpreter_probe() -> Result<()> {
     fs::write(&proxy, windows_python_launcher(&base, WindowMode::Console)?)?;
     assert_eq!(canonicalize_executable(&proxy)?, base);
 
+    // The probe must be cacheable even when its scratch space is in the
+    // cache that contains the venv junction.
+    let active = cache.root().join("active");
+    uv_fs::create_symlink(dir.path(), &active)?;
+    let proxy = active.join(r"Scripts\python.exe");
     let interpreter = Interpreter::query(&proxy, &cache)?;
     assert!(interpreter.is_virtualenv());
     assert!(same_file::is_same_file(
